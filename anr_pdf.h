@@ -31,10 +31,11 @@
 //	IMPLEMENTED
 //		Text (fonts/sizes/colors/spacing)
 //		Bookmarks (see chapter 12.3.3)
-//		Primitives (lines)
+//		Primitives (lines/cubic bezier)
+//		Document properties
 //
 //	UNIMPLEMENTED
-//		Primitives (rectangles/polygons/bezier curves)
+//		Primitives (rectangles/polygons/)
 //		Text rotation
 //		Tables (using primitives)
 //		Images
@@ -285,6 +286,7 @@ ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns
 // === OBJECT OPERATIONS === 
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 
 // === DEFAULT CONFIGS === 
 ANRPDFDEF anr_pdf_td	anr_pdf_td_default();
@@ -620,7 +622,7 @@ anr_pdf_gfx anr_pdf_gfx_default()
 		.miter_limit = 10, .dash_pattern = {0}, .color = ANR_PDF_RGB(0.0f,0.0f,0.0f)};
 }
 
-anr_pdf_obj anr_pdf_add_bezier_curve(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
+anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
 {
 	ANRPDF_ASSERT(data_length >= 3);
 	ANRPDF_ASSERT((data_length - 3) % 2 == 0);

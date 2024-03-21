@@ -136,7 +136,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 				{400.0f,  20.0f}, {500.0f, 200.0f},
 				{700.0f, 700.0f}, {300.0f, 300.0f},
 			};
-			line_ref = anr_pdf_add_bezier_curve(pdf, line_data, 7, gfx);
+			anr_pdf_add_cubic_bezier(pdf, line_data, 7, gfx);
 		}
 	}
 
