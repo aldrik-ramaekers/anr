@@ -67,7 +67,7 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 	info.font = pdf->default_font_ref;
 
 	info.font = pdf->default_font_italic_bold_ref;
-	NEXT_LINE; anr_pdf_ref bold_ref = anr_pdf_add_text(pdf, "This is bold italic text", 10, size.y, info);
+	NEXT_LINE; anr_pdf_obj bold_ref = anr_pdf_add_text(pdf, "This is bold italic text", 10, size.y, info);
 	info.font = pdf->default_font_ref;
 
  	anr_pdf_page pageref = anr_pdf_page_end(pdf);
@@ -80,12 +80,81 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 
 static anr_pdf_page create_page_2(anr_pdf* pdf)
 {
+	anr_pdf_obj line_ref;
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
 	{
-		anr_pdf_add_text(pdf, "Hello page 2", 100, 100, ANR_PDF_TD_DEFAULT);
+		anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
+
+		{
+			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
+			gfx.line_width = 10;
+			gfx.line_join = ANR_PDF_LINEJOIN_MITER;
+			gfx.miter_limit = 0;
+			gfx.color = ANR_PDF_RGB(1.0f, 0.0f, 0.0f);
+
+			anr_pdf_vecf line_data[] = {
+				{size.x - 10.0f, size.y - 10.0f},
+				{size.x - 50.0f, size.y - 10.0f},
+				{size.x - 70.0f, size.y - 70.0f},
+				{size.x - 170.0f, size.y - 50.0f},
+				{size.x - 300.0f, size.y - 20.0f},
+				{size.x - 420.0f, size.y - 220.0f},
+				{size.x - 380.0f, size.y - 180.0f},
+				{size.x - 500.0f, size.y - 20.0f},
+			};
+			anr_pdf_add_line(pdf, line_data, 8, gfx);
+		}
+
+		{
+			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
+			gfx.line_width = 10;
+			gfx.color = ANR_PDF_RGB(0.0f, 0.3f, 0.5f);
+
+			anr_pdf_vecf line_data[] = {
+				{10.0f, 10.0f},
+				{50.0f, 10.0f},
+				{70.0f, 70.0f},
+				{170.0f, 50.0f},
+				{300.0f, 20.0f},
+				{420.0f, 220.0f},
+				{380.0f, 180.0f},
+				{500.0f, 20.0f},
+			};
+			line_ref = anr_pdf_add_line(pdf, line_data, 8, gfx);
+		}
+
+		{
+			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
+			gfx.line_width = 4;
+			gfx.color = ANR_PDF_RGB(0.0f, 1.0f, 0.0f);
+
+			anr_pdf_vecf line_data[] = {
+				{100.0f, 100.0f}, {200.0f, 200.0f}, {300.0f, 100.0f},
+				{400.0f,  20.0f}, {500.0f, 200.0f},
+				{700.0f, 700.0f}, {300.0f, 300.0f},
+			};
+			line_ref = anr_pdf_add_bezier_curve(pdf, line_data, 7, gfx);
+		}
 	}
-	return anr_pdf_page_end(pdf);
+
+	anr_pdf_page pageref = anr_pdf_page_end(pdf);
+
+	anr_pdf_bookmark bm2 = anr_pdf_document_add_bookmark(pdf, pageref, NULL, NULL, "Chapter 2");
+	anr_pdf_document_add_bookmark(pdf, pageref, &line_ref, &bm2, "Chapter 2.1");
+
+	return pageref;
 }
+
+static anr_pdf_page create_page_3(anr_pdf* pdf)
+{
+	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
+	anr_pdf_page pageref = anr_pdf_page_end(pdf);
+	return pageref;
+}
+
 
 int main()
 {
@@ -95,11 +164,8 @@ int main()
 		"Text, Bananas", NULL, "anr_pdf Library", "20240318201500-00'00", NULL);
 
 	create_page_1(&pdf);
-	anr_pdf_page page2 = create_page_2(&pdf);
-
-	anr_pdf_document_add_bookmark(&pdf, page2, NULL, NULL, "Chapter 2");
-	anr_pdf_document_add_bookmark(&pdf, page2, NULL, NULL, "Chapter 3");
-	anr_pdf_document_add_bookmark(&pdf, page2, NULL, NULL, "Chapter 4");
+	create_page_2(&pdf);
+	create_page_3(&pdf);
 
 	anr_pdf_document_end(&pdf);
 	anr_pdf_write_to_file(&pdf, "bin/test_pdf.pdf");

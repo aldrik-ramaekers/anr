@@ -30,12 +30,13 @@
 //
 //	IMPLEMENTED
 //		Text (fonts/sizes/colors/spacing)
-//		Bookmarks (chaper 12.3.3)
+//		Bookmarks (see chapter 12.3.3)
+//		Primitives (lines)
 //
 //	UNIMPLEMENTED
-//		Primitives (lines/rectangles/polygons/bezier curves)
+//		Primitives (rectangles/polygons/bezier curves)
 //		Text rotation
-//		Tables
+//		Tables (using primitives)
 //		Images
 //		Password encryption (See chapter 7.6.1)
 //		Vertical text
@@ -98,7 +99,6 @@ typedef struct
 {
 	anr_pdf_id id;
 	uint64_t offset_in_body;
-	anr_pdf_recf rec; // rec on page, only set for visible objects.
 } anr_pdf_ref;
 
 
@@ -128,6 +128,12 @@ typedef enum {
 typedef struct 
 {
 	anr_pdf_ref ref;
+	anr_pdf_recf rec;
+} anr_pdf_obj;
+
+typedef struct 
+{
+	anr_pdf_ref ref;
 	anr_pdf_page_size size;
 } anr_pdf_page;
 
@@ -137,7 +143,7 @@ typedef struct
 	uint32_t children_count;
 	uint64_t index;
 	const char* text; // needs to be valid untill end of document.
-	anr_pdf_ref item_on_page;
+	anr_pdf_obj item_on_page;
 	anr_pdf_page page;
 	uint64_t prev_index; // prev item on same level. first item = -1
 	uint64_t next_index; // next item on same level. last item  = -1
@@ -175,7 +181,41 @@ typedef struct
 	anr_pdf_color color; // default black
 } anr_pdf_td;
 
+typedef enum
+{
+	ANR_PDF_LINECAP_BUTT = 0,
+	ANR_PDF_LINECAP_ROUNDED = 1,
+	ANR_PDF_LINECAP_SQUARE = 2,
+} anr_pdf_linecap_style;
+
+typedef enum
+{
+	ANR_PDF_LINEJOIN_MITER = 0,
+	ANR_PDF_LINEJOIN_ROUND = 1,
+	ANR_PDF_LINEJOIN_BEVEL = 2,
+} anr_pdf_linejoin_style;
+
+typedef enum
+{
+	ANR_PDF_RENDER_INTENT_ABSOLUTE_COLORIMETRIC
+} anr_pdf_render_intent;
+
+// See Table 52
+// Parameters for all graphics.
+typedef struct
+{
+	anr_pdf_linecap_style line_cap; // default 0
+	int line_width; // default 0 = smallest possible line depending on device.
+	anr_pdf_linejoin_style line_join; // default 0
+	float miter_limit; // default 10, only applicable when line_join = ANR_PDF_LINEJOIN_MITER
+	int dash_pattern[2]; // default = empty = solid line
+	anr_pdf_color color; // default black
+	// @Unimplemented: automatic stroke adjustment, op SA, see table 58
+	// @Unimplemented: option to fill path
+} anr_pdf_gfx;
+
 #define ANR_PDF_TD_DEFAULT anr_pdf_td_default()
+#define ANR_PDF_GFX_DEFAULT anr_pdf_gfx_default()
 
 typedef struct
 {
@@ -229,7 +269,7 @@ ANRPDFDEF anr_pdf 			anr_pdf_document_begin(uint32_t buf_size);
 ANRPDFDEF void 				anr_pdf_document_end(anr_pdf* pdf);
 ANRPDFDEF void 				anr_pdf_write_to_file(anr_pdf* pdf, const char* path);
 // item_on_page optional, parent optional.
-ANRPDFDEF anr_pdf_bookmark 	anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_ref* item_on_page, 
+ANRPDFDEF anr_pdf_bookmark 	anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj* item_on_page, 
 								anr_pdf_bookmark* parent, const char* text); 
 // Add document information to the pdf. See chapter 14.3.3
 // Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm)
@@ -243,10 +283,12 @@ ANRPDFDEF anr_pdf_page 	anr_pdf_page_end(anr_pdf* pdf);
 ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns the size of the page in user space units. (inches * 72)
 
 // === OBJECT OPERATIONS === 
-ANRPDFDEF anr_pdf_ref 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 
 // === DEFAULT CONFIGS === 
 ANRPDFDEF anr_pdf_td	anr_pdf_td_default();
+ANRPDFDEF anr_pdf_gfx	anr_pdf_gfx_default();
 
 ////   end header file   /////////////////////////////////////////////////////
 #endif // End of INCLUDE_ANR_PDF_H
@@ -264,6 +306,11 @@ static void anr__pdf_fclose(FILE* file)
 {
 	fflush(file);
 	fclose(file);
+}
+
+static anr_pdf_obj anr__pdf_emptyobj()
+{
+	return (anr_pdf_obj){0};
 }
 
 static anr_pdf_ref anr__pdf_emptyref()
@@ -347,14 +394,14 @@ static anr_pdf_ref anr__pdf_begin_obj(anr_pdf* pdf)
 	return (anr_pdf_ref){.id = id, .offset_in_body = pdf->body_write_cursor};
 }
 
-static anr_pdf_ref anr__pdf_begin_content_obj(anr_pdf* pdf, anr_pdf_recf rec)
+static anr_pdf_obj anr__pdf_begin_content_obj(anr_pdf* pdf, anr_pdf_recf rec)
 {
 	ANRPDF_ASSERT(!pdf->page.is_written);
 	ANRPDF_ASSERT(pdf->page.objects_count < ANR_PDF_MAX_OBJECTS_PER_PAGE);
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
-	ref.rec = rec;
+	anr_pdf_obj objref = {.ref = ref, .rec = rec};
 	pdf->page.objects[pdf->page.objects_count++] = ref;
-	return ref;
+	return objref;
 }
 
 static void anr__append_xref_table(anr_pdf* pdf) 
@@ -404,8 +451,8 @@ static anr_pdf_ref anr__append_outlines(anr_pdf* pdf)
 			anr__pdf_append_printf(pdf, "\n/Count %d", current_bookmark.children_count);
 
 		float offset_bottom = anr_pdf_page_get_size(current_bookmark.page.size).y + 2;
-		if (anr__pdf_ref_valid(current_bookmark.item_on_page)) {
-			offset_bottom = current_bookmark.item_on_page.rec.y + current_bookmark.item_on_page.rec.h;
+		if (anr__pdf_ref_valid(current_bookmark.item_on_page.ref)) {
+			offset_bottom = current_bookmark.item_on_page.rec.y;
 		}
 		anr__pdf_append_printf(pdf, "\n/Dest [%d 0 R /XYZ 0 %.2f 0]", current_bookmark.page.ref.id, offset_bottom);
 
@@ -463,46 +510,22 @@ static void anr__append_document_catalog(anr_pdf* pdf)
 }
 
 static void anr__create_default_font(anr_pdf* pdf) {
-	anr_pdf_ref fontref = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<< /Type /Font");
-	anr__pdf_append_str(pdf, "\n/Subtype /Type1");
-	anr__pdf_append_str_idref(pdf, "\n/Name /F%d", fontref);
-	anr__pdf_append_str(pdf, "\n/BaseFont /Times-Roman");
-	anr__pdf_append_str(pdf, "\n/Encoding /MacRomanEncoding");
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
+	#define LOAD_FONT(_name, _container) { \
+		anr_pdf_ref fontref = anr__pdf_begin_obj(pdf); \
+		anr__pdf_append_str(pdf, "\n<< /Type /Font"); \
+		anr__pdf_append_str(pdf, "\n/Subtype /Type1"); \
+		anr__pdf_append_str_idref(pdf, "\n/Name /F%d", fontref); \
+		anr__pdf_append_str(pdf, "\n/BaseFont /"_name); \
+		anr__pdf_append_str(pdf, "\n/Encoding /MacRomanEncoding"); \
+		anr__pdf_append_str(pdf, ">>"); \
+		anr__pdf_append_str(pdf, "\nendobj"); \
+		_container = fontref; \
+	}
 
-	anr_pdf_ref fontref_italic = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<< /Type /Font");
-	anr__pdf_append_str(pdf, "\n/Subtype /Type1");
-	anr__pdf_append_str_idref(pdf, "\n/Name /F%d", fontref_italic);
-	anr__pdf_append_str(pdf, "\n/BaseFont /Times-Italic");
-	anr__pdf_append_str(pdf, "\n/Encoding /MacRomanEncoding");
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
-
-	anr_pdf_ref fontref_bold = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<< /Type /Font");
-	anr__pdf_append_str(pdf, "\n/Subtype /Type1");
-	anr__pdf_append_str_idref(pdf, "\n/Name /F%d", fontref_bold);
-	anr__pdf_append_str(pdf, "\n/BaseFont /Times-Bold");
-	anr__pdf_append_str(pdf, "\n/Encoding /MacRomanEncoding");
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
-
-	anr_pdf_ref fontref_bolditalic = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<< /Type /Font");
-	anr__pdf_append_str(pdf, "\n/Subtype /Type1");
-	anr__pdf_append_str_idref(pdf, "\n/Name /F%d", fontref_bolditalic);
-	anr__pdf_append_str(pdf, "\n/BaseFont /Times-BoldItalic");
-	anr__pdf_append_str(pdf, "\n/Encoding /MacRomanEncoding");
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
-
-	pdf->default_font_italic_ref = fontref_italic;
-	pdf->default_font_bold_ref = fontref_bold;
-	pdf->default_font_italic_bold_ref = fontref_bolditalic;
-	pdf->default_font_ref = fontref;
+	LOAD_FONT("Times-Roman", pdf->default_font_ref);
+	LOAD_FONT("Times-Italic", pdf->default_font_italic_ref);
+	LOAD_FONT("Times-Bold", pdf->default_font_bold_ref);
+	LOAD_FONT("Times-BoldItalic", pdf->default_font_italic_bold_ref);
 }
 
 anr_pdf anr_pdf_document_begin(uint32_t buf_size)
@@ -591,9 +614,135 @@ anr_pdf_td anr_pdf_td_default()
 	return (anr_pdf_td){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),0, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}};
 }
 
-anr_pdf_ref anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info) {
+anr_pdf_gfx anr_pdf_gfx_default()
+{
+	return (anr_pdf_gfx){.line_cap = ANR_PDF_LINECAP_BUTT, .line_width = 0, .line_join = ANR_PDF_LINEJOIN_MITER, 
+		.miter_limit = 10, .dash_pattern = {0}, .color = ANR_PDF_RGB(0.0f,0.0f,0.0f)};
+}
+
+anr_pdf_obj anr_pdf_add_bezier_curve(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
+{
+	ANRPDF_ASSERT(data_length >= 3);
+	ANRPDF_ASSERT((data_length - 3) % 2 == 0);
+
+	// Calculate bounds
+	anr_pdf_recf rec = {0};
+	for (uint32_t i = 0; i < data_length; i++)
+	{
+		anr_pdf_vecf point = data[i];
+		if (point.x < rec.x) rec.x = point.x;
+		if (point.y > rec.y) rec.y = point.y;
+		if (point.x > rec.w) rec.w = point.x;
+		if (point.y < rec.h) rec.h = point.y;
+	}
+	rec.w = rec.w - rec.x;
+	rec.h = rec.y - rec.h;
+
 	uint64_t stream_length = 0;
-	anr_pdf_ref obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y, 0.0f, (float)info.font_size));
+	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, rec);
+	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
+	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
+	anr__pdf_append_str(pdf, "\nstream");
+
+	uint64_t write_start = anr__pdf_append_printf(pdf, "\n%d J", gfx.line_cap);
+	anr__pdf_append_printf(pdf, "\n%d w", gfx.line_width);
+	anr__pdf_append_printf(pdf, "\n%d j", gfx.line_join);
+	anr__pdf_append_printf(pdf, "\n%.3f M", gfx.miter_limit);
+	if (gfx.dash_pattern[0] > 0 && gfx.dash_pattern[1] > 0) {
+		anr__pdf_append_printf(pdf, "\n[%d %d] 0 d", gfx.dash_pattern[0], gfx.dash_pattern[1]);
+	}
+	anr__pdf_append_printf(pdf, "\n%.1f %.1f %.1f RG", gfx.color.r, gfx.color.g, gfx.color.b);
+
+	anr__pdf_append_printf(pdf, "\n%.3f %.3f m", data[0].x, data[0].y);
+	anr__pdf_append_printf(pdf, "\n%.3f %.3f %.3f %.3f %.3f %.3f c", 
+									data[0].x, data[0].y, data[1].x, data[1].y, data[2].x, data[2].y);
+
+	for (uint32_t i = 3; i < data_length; i+=2)
+	{
+		anr_pdf_vecf point1 = data[i];
+		anr_pdf_vecf point2 = data[i+1];
+		anr__pdf_append_printf(pdf, "\n%.3f %.3f %.3f %.3f v", point1.x, point1.y, point2.x, point2.y);
+	}
+
+	anr__pdf_append_printf(pdf, "\nS");
+	anr__pdf_append_printf(pdf, "\nn");
+
+	// draw line here
+
+	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	stream_length = write_end - write_start;
+
+	// Object containing stream length.
+	anr__pdf_begin_obj(pdf);
+	anr__pdf_append_printf(pdf, "\n%d", stream_length);
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	return obj_ref;
+}
+
+anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
+{
+	ANRPDF_ASSERT(data_length > 0);
+
+	// Calculate bounds
+	anr_pdf_recf rec = {0};
+	for (uint32_t i = 0; i < data_length; i++)
+	{
+		anr_pdf_vecf point = data[i];
+		if (point.x < rec.x) rec.x = point.x;
+		if (point.y > rec.y) rec.y = point.y;
+		if (point.x > rec.w) rec.w = point.x;
+		if (point.y < rec.h) rec.h = point.y;
+	}
+	rec.w = rec.w - rec.x;
+	rec.h = rec.y - rec.h;
+
+	uint64_t stream_length = 0;
+	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, rec);
+	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
+	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
+	anr__pdf_append_str(pdf, "\nstream");
+
+	uint64_t write_start = anr__pdf_append_printf(pdf, "\n%.3f %.3f m", data[0].x, data[0].y);
+	anr__pdf_append_printf(pdf, "\n%d J", gfx.line_cap);
+	anr__pdf_append_printf(pdf, "\n%d w", gfx.line_width);
+	anr__pdf_append_printf(pdf, "\n%d j", gfx.line_join);
+	anr__pdf_append_printf(pdf, "\n%.3f M", gfx.miter_limit);
+	if (gfx.dash_pattern[0] > 0 && gfx.dash_pattern[1] > 0) {
+		anr__pdf_append_printf(pdf, "\n[%d %d] 0 d", gfx.dash_pattern[0], gfx.dash_pattern[1]);
+	}
+	anr__pdf_append_printf(pdf, "\n%.1f %.1f %.1f RG", gfx.color.r, gfx.color.g, gfx.color.b);
+
+	for (uint32_t i = 1; i < data_length; i++)
+	{
+		anr_pdf_vecf point = data[i];
+		anr__pdf_append_printf(pdf, "\n%.3f %.3f l", point.x, point.y);
+	}
+
+	anr__pdf_append_printf(pdf, "\nS");
+	anr__pdf_append_printf(pdf, "\nn");
+
+	// draw line here
+
+	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	stream_length = write_end - write_start;
+
+	// Object containing stream length.
+	anr__pdf_begin_obj(pdf);
+	anr__pdf_append_printf(pdf, "\n%d", stream_length);
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	return obj_ref;
+}
+
+anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info) 
+{
+	uint64_t stream_length = 0;
+	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, 0.0f, (float)info.font_size));
 	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
 	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
 	anr__pdf_append_str(pdf, "\nstream");
@@ -664,7 +813,7 @@ anr_pdf_vecf anr_pdf_page_get_size(anr_pdf_page_size size) {
 	return __anr_pdf_page_sizes[size];
 }
 
-anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_ref* item_on_page, 
+anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj* item_on_page, 
 								anr_pdf_bookmark* parent, const char* text)
 {
 	ANRPDF_ASSERT(pdf->bookmark_count < ANR_PDF_MAX_BOOKMARKS);
@@ -705,7 +854,7 @@ anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, 
 
 
 	anr_pdf_bookmark bookmark = {
-		.item_on_page = item_on_page == NULL ? anr__pdf_emptyref() : *item_on_page, 
+		.item_on_page = item_on_page == NULL ? anr__pdf_emptyobj() : *item_on_page, 
 		.index = new_index, 
 		.text = text, 
 		.parent_index = parent == NULL ? -1 : parent->index, 
