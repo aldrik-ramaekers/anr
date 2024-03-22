@@ -1,5 +1,5 @@
 /*
-	anr_pdf.h - v0.1 - public domain pdf writer - Aldrik Ramaekers
+	anr_pdf.h - v0.1 - public domain pdf writer
 
 	This is a single-header-file library for writing pdf files.
 
@@ -31,8 +31,8 @@
 //	IMPLEMENTED
 //		Text (fonts/sizes/colors/spacing)
 //		Bookmarks (see chapter 12.3.3)
-//		Primitives (lines/cubic bezier)
-//		Document properties
+//		Primitives (lines/polygons/cubic beziers)
+//		Page & Document properties
 //
 //	UNIMPLEMENTED
 //		Primitives (rectangles/polygons/)
@@ -42,9 +42,11 @@
 //		Password encryption (See chapter 7.6.1)
 //		Vertical text
 //		UTF8 text/fonts
+//		Links
 //		Page labels (See chapter 12.4.2)
 //		Thumbnail images (See chapter 12.3.4)
-//		Interactive elements: Text fields, radio buttons
+//		Form fields (textbox, checkbox)
+//		Watermark
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,6 +71,11 @@
 #ifndef ANR_PDF_MAX_OBJECTS_PER_PAGE
 #define ANR_PDF_MAX_OBJECTS_PER_PAGE 1000
 #endif
+
+#ifndef ANR_PDF_MAX_ANNOTATIONS_PER_PAGE
+#define ANR_PDF_MAX_ANNOTATIONS_PER_PAGE 50
+#endif
+
 
 #ifndef ANRPDFDEF
 #ifdef ANR_PDF_STATIC
@@ -136,6 +143,7 @@ typedef struct
 {
 	anr_pdf_ref ref;
 	anr_pdf_page_size size;
+	uint64_t refoffset; // offset to parent reference.
 } anr_pdf_page;
 
 typedef struct
@@ -196,11 +204,6 @@ typedef enum
 	ANR_PDF_LINEJOIN_BEVEL = 2,
 } anr_pdf_linejoin_style;
 
-typedef enum
-{
-	ANR_PDF_RENDER_INTENT_ABSOLUTE_COLORIMETRIC
-} anr_pdf_render_intent;
-
 // See Table 52
 // Parameters for all graphics.
 typedef struct
@@ -208,11 +211,11 @@ typedef struct
 	anr_pdf_linecap_style line_cap; // default 0
 	int line_width; // default 0 = smallest possible line depending on device.
 	anr_pdf_linejoin_style line_join; // default 0
-	float miter_limit; // default 10, only applicable when line_join = ANR_PDF_LINEJOIN_MITER
+	float miter_limit; // default 10, only applicable when line_join = ANR_PDF_LINEJOIN_MITER, must be > 0
 	int dash_pattern[2]; // default = empty = solid line
 	anr_pdf_color color; // default black
 	// @Unimplemented: automatic stroke adjustment, op SA, see table 58
-	// @Unimplemented: option to fill path
+	// @Unimplemented: option to fill path with color
 } anr_pdf_gfx;
 
 #define ANR_PDF_TD_DEFAULT anr_pdf_td_default()
@@ -239,10 +242,12 @@ typedef struct
 		anr_pdf_page_size size;
 		anr_pdf_ref objects[ANR_PDF_MAX_OBJECTS_PER_PAGE];
 		uint64_t objects_count;
+		anr_pdf_ref annotations[ANR_PDF_MAX_ANNOTATIONS_PER_PAGE];
+		uint64_t annotations_count;
 	} page;
 
 	// list of pages
-	anr_pdf_ref pages[ANR_PDF_MAX_PAGES];
+	anr_pdf_page pages[ANR_PDF_MAX_PAGES];
 	uint64_t page_count;
 
 	// Standard objects
@@ -283,9 +288,10 @@ ANRPDFDEF void 			anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size);
 ANRPDFDEF anr_pdf_page 	anr_pdf_page_end(anr_pdf* pdf);
 ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns the size of the page in user space units. (inches * 72)
 
-// === OBJECT OPERATIONS === 
+// === OBJECT OPERATIONS === (@Unimplemented: Base85 encoded)
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 
 // === DEFAULT CONFIGS === 
@@ -401,6 +407,9 @@ static anr_pdf_obj anr__pdf_begin_content_obj(anr_pdf* pdf, anr_pdf_recf rec)
 	ANRPDF_ASSERT(!pdf->page.is_written);
 	ANRPDF_ASSERT(pdf->page.objects_count < ANR_PDF_MAX_OBJECTS_PER_PAGE);
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
+	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
+	anr__pdf_append_str(pdf, "\nstream");
 	anr_pdf_obj objref = {.ref = ref, .rec = rec};
 	pdf->page.objects[pdf->page.objects_count++] = ref;
 	return objref;
@@ -422,7 +431,7 @@ static void anr__append_xref_table(anr_pdf* pdf)
 		anr__pdf_append_str_idref(pdf, "/Info %d 0 R", pdf->doc_info_dic_ref);
 	}
 	anr__pdf_append_str(pdf, ">>\nstartxref");
-	anr__pdf_append_printf(pdf, "\n%d", refxref);
+	anr__pdf_append_printf(pdf, "\n%d", refxref+1);
 }
 
 static anr_pdf_ref anr__append_outlines(anr_pdf* pdf)
@@ -490,7 +499,7 @@ static void anr__append_document_catalog(anr_pdf* pdf)
 
 	anr__pdf_append_str(pdf, "\n/Kids [");
 	for (uint64_t i = 0; i < pdf->page_count; i++)
-		anr__pdf_append_str_idref(pdf, "%d 0 R\n", pdf->pages[i]);
+		anr__pdf_append_str_idref(pdf, "%d 0 R\n", pdf->pages[i].ref);
 	anr__pdf_append_str(pdf, "]");
 
 	anr__pdf_append_printf(pdf, "\n/Count %d", pdf->page_count);
@@ -507,6 +516,15 @@ static void anr__append_document_catalog(anr_pdf* pdf)
 	anr__pdf_append_str_idref(pdf, "\n/Pages %d 0 R", treeref);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
+
+	// Pages need reference to page tree. Yikes.
+	for (uint64_t i = 0; i < pdf->page_count; i++)
+	{
+		char idbuf[20];
+		sprintf(idbuf, "%" PRId64, treeref.id);
+		int len = strlen(idbuf);
+		memcpy(pdf->body_buffer + pdf->pages[i].refoffset + (8-len), idbuf, len);
+	}
 
 	pdf->catalog_ref = docref;
 }
@@ -571,7 +589,9 @@ void anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size)
 	ANRPDF_ASSERT(pdf->page_count < ANR_PDF_MAX_PAGES);
 	pdf->page.is_written = 0;
 	pdf->page.objects_count = 0;
+	pdf->page.annotations_count = 0;
 	pdf->page.size = size;
+	// @Unimplemented: page rotation
 }
 
 anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
@@ -584,6 +604,7 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 
 	anr_pdf_ref pageref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n<</Type /Page");
+	uint64_t offset = anr__pdf_append_str(pdf, "\n/Parent 00000000 0 R"); // ref is set when pagetree is apended..
 	anr__pdf_append_str_idref(pdf, "\n/Resources <</ProcSet %d 0 R", procsetref);
 
 	// Import all default fonts in page.
@@ -594,21 +615,28 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_italic_bold_ref.id, pdf->default_font_italic_bold_ref.id);
 	anr__pdf_append_str(pdf, "\n>>>>");
 
-	//anr__pdf_append_str(pdf, "\n/Parent 0 0 R"); // this field is required according to spec. Yikes! @Unimplemented
 	
 	anr_pdf_vecf page_size = anr_pdf_page_get_size(pdf->page.size);
 	anr__pdf_append_printf(pdf, "\n/MediaBox [0 0 %.3f %.3f]", page_size.x, page_size.y);
 
+	// Add all annotations to annotation array.
+	anr__pdf_append_str(pdf, "\n/Annots [\n");
+	for (uint64_t i = 0; i < pdf->page.annotations_count; i++)
+		anr__pdf_append_str_idref(pdf, "%d 0 R\n", pdf->page.annotations[i]);
+	anr__pdf_append_str(pdf, "]");
+
+	// Add all objects to content array.
 	anr__pdf_append_str(pdf, "\n/Contents [\n");
 	for (uint64_t i = 0; i < pdf->page.objects_count; i++)
 		anr__pdf_append_str_idref(pdf, "%d 0 R\n", pdf->page.objects[i]);
 	anr__pdf_append_str(pdf, "]>>");
 	anr__pdf_append_str(pdf, "\nendobj");
 
-	pdf->pages[pdf->page_count++] = pageref;
+	anr_pdf_page page = (anr_pdf_page){.ref = pageref, .size = pdf->page.size, .refoffset = offset+9};
+	pdf->pages[pdf->page_count++] = page;
 	pdf->page.is_written = 1;
 
-	return (anr_pdf_page){.ref = pageref, .size = pdf->page.size};
+	return page;
 }
 
 anr_pdf_td anr_pdf_td_default()
@@ -626,6 +654,7 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 {
 	ANRPDF_ASSERT(data_length >= 3);
 	ANRPDF_ASSERT((data_length - 3) % 2 == 0);
+	ANRPDF_ASSERT(gfx.miter_limit > 0); // no warning given & gfx will not be displayed if 0
 
 	// Calculate bounds
 	anr_pdf_recf rec = {0};
@@ -642,9 +671,6 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 
 	uint64_t stream_length = 0;
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, rec);
-	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
-	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
-	anr__pdf_append_str(pdf, "\nstream");
 
 	uint64_t write_start = anr__pdf_append_printf(pdf, "\n%d J", gfx.line_cap);
 	anr__pdf_append_printf(pdf, "\n%d w", gfx.line_width);
@@ -669,8 +695,6 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	anr__pdf_append_printf(pdf, "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
-	// draw line here
-
 	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
 	anr__pdf_append_str(pdf, "\nendobj");
 
@@ -684,9 +708,16 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	return obj_ref;
 }
 
-anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
+anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx gfx)
+{
+	anr_pdf_vecf data[2] = {p1, p2};
+	return anr_pdf_add_polygon(pdf, data, 2, gfx);
+}
+
+anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
 {
 	ANRPDF_ASSERT(data_length > 0);
+	ANRPDF_ASSERT(gfx.miter_limit > 0);
 
 	// Calculate bounds
 	anr_pdf_recf rec = {0};
@@ -703,9 +734,6 @@ anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_len
 
 	uint64_t stream_length = 0;
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, rec);
-	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
-	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
-	anr__pdf_append_str(pdf, "\nstream");
 
 	uint64_t write_start = anr__pdf_append_printf(pdf, "\n%.3f %.3f m", data[0].x, data[0].y);
 	anr__pdf_append_printf(pdf, "\n%d J", gfx.line_cap);
@@ -726,8 +754,6 @@ anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_len
 	anr__pdf_append_printf(pdf, "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
-	// draw line here
-
 	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
 	anr__pdf_append_str(pdf, "\nendobj");
 
@@ -743,12 +769,9 @@ anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_len
 
 anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info) 
 {
+	//uint64_t str_len = strlen(text); // we need to calculate string width somehow
 	uint64_t stream_length = 0;
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, 0.0f, (float)info.font_size));
-	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
-	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
-	anr__pdf_append_str(pdf, "\nstream");
-
 	uint64_t write_start = anr__pdf_append_str(pdf, "\nBT");
 
 	// Use default regular font if no font given.
@@ -813,6 +836,22 @@ anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, a
 
 anr_pdf_vecf anr_pdf_page_get_size(anr_pdf_page_size size) {
 	return __anr_pdf_page_sizes[size];
+}
+
+anr_pdf_ref anr_pdf_page_add_text_annotation(anr_pdf* pdf, anr_pdf_obj obj, char* text)
+{
+	ANRPDF_ASSERT(pdf->page.annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	pdf->page.annotations[pdf->page.annotations_count++] = ref;
+
+	anr__pdf_append_str(pdf, "\n<</Type /Annot");
+	anr__pdf_append_str(pdf, "\n/Subtype /Text");
+	anr__pdf_append_printf(pdf, "\n/Rect [%.2f %.2f %.2f %.2f]", obj.rec.x, obj.rec.y, obj.rec.x + obj.rec.w, obj.rec.y + obj.rec.h);
+	anr__pdf_append_printf(pdf, "\n/Contents (%s)", text);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+	
+	return ref;
 }
 
 anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj* item_on_page, 

@@ -70,10 +70,12 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 	NEXT_LINE; anr_pdf_obj bold_ref = anr_pdf_add_text(pdf, "This is bold italic text", 10, size.y, info);
 	info.font = pdf->default_font_ref;
 
+	anr_pdf_page_add_text_annotation(pdf, bold_ref, "This text has an annotation");
  	anr_pdf_page pageref = anr_pdf_page_end(pdf);
 
 	anr_pdf_bookmark bm1 = anr_pdf_document_add_bookmark(pdf, pageref, NULL, NULL, "Chapter 1");
 	anr_pdf_document_add_bookmark(pdf, pageref, &bold_ref, &bm1, "Chapter 1.1");
+
 
 	return pageref;
 }
@@ -84,13 +86,13 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
 	{
 		anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
-
+	
 		{
 			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.line_join = ANR_PDF_LINEJOIN_MITER;
-			gfx.miter_limit = 0;
+			gfx.miter_limit = 1;
 			gfx.color = ANR_PDF_RGB(1.0f, 0.0f, 0.0f);
 
 			anr_pdf_vecf line_data[] = {
@@ -103,7 +105,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 				{size.x - 380.0f, size.y - 180.0f},
 				{size.x - 500.0f, size.y - 20.0f},
 			};
-			anr_pdf_add_line(pdf, line_data, 8, gfx);
+			anr_pdf_add_polygon(pdf, line_data, 8, gfx);
 		}
 
 		{
@@ -122,7 +124,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 				{380.0f, 180.0f},
 				{500.0f, 20.0f},
 			};
-			line_ref = anr_pdf_add_line(pdf, line_data, 8, gfx);
+			line_ref = anr_pdf_add_polygon(pdf, line_data, 8, gfx);
 		}
 
 		{
@@ -138,6 +140,16 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 			};
 			anr_pdf_add_cubic_bezier(pdf, line_data, 7, gfx);
 		}
+
+		{
+			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
+			gfx.line_width = 10;
+			gfx.color = ANR_PDF_RGB(1.0f, 1.0f, 0.0f);
+			anr_pdf_add_line(pdf, (anr_pdf_vecf){350.0f, 700.0f}, (anr_pdf_vecf){350.0f, 100.0f}, gfx);
+		}
+
+		anr_pdf_add_text(pdf, "This page has some weird shapes...", 300, 500, ANR_PDF_TD_DEFAULT);
 	}
 
 	anr_pdf_page pageref = anr_pdf_page_end(pdf);
