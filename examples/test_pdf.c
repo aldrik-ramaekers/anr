@@ -1,9 +1,11 @@
-#define ANR_PDF_BUFFER_RESERVE 10000
+#define ANR_PDF_BUFFER_RESERVE 1000000
 
 #define ANR_PDF_IMPLEMENTATION
 #include "../anr_pdf.h"
 
 #include <math.h>
+
+anr_pdf_obj bold_text_link;
 
 static anr_pdf_page create_page_1(anr_pdf* pdf)
 {
@@ -69,15 +71,15 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 	info.font = pdf->default_font_ref;
 
 	info.font = pdf->default_font_italic_bold_ref;
-	NEXT_LINE; anr_pdf_obj bold_ref = anr_pdf_add_text(pdf, "This is bold italic text", 10, size.y, info);
+	NEXT_LINE; bold_text_link = anr_pdf_add_text(pdf, "This is bold italic text", 10, size.y, info);
 	info.font = pdf->default_font_ref;
 
-	anr_pdf_page_add_text_annotation(pdf, bold_ref, "This text has an annotation");
  	anr_pdf_page pageref = anr_pdf_page_end(pdf);
 
 	anr_pdf_bookmark bm1 = anr_pdf_document_add_bookmark(pdf, pageref, NULL, NULL, "Chapter 1");
-	anr_pdf_document_add_bookmark(pdf, pageref, &bold_ref, &bm1, "Chapter 1.1");
+	anr_pdf_document_add_bookmark(pdf, pageref, &bold_text_link, &bm1, "Chapter 1.1");
 
+	anr_pdf_add_annotation_text(pdf, pageref, bold_text_link, "This text has an annotation");
 
 	return pageref;
 }
@@ -172,14 +174,16 @@ static anr_pdf_page create_page_3(anr_pdf* pdf)
 
 int main()
 {
-	anr_pdf* pdf = anr_pdf_document_begin(1000000);
+	anr_pdf* pdf = anr_pdf_document_begin();
 	anr_pdf_document_add_information_dictionary(pdf, 
 		"Simple text document", "Aldrik", "Cool Banana's", 
 		"Text, Bananas", NULL, "anr_pdf Library", "20240318201500-00'00", NULL);
 
-	create_page_1(pdf);
-	create_page_2(pdf);
-	create_page_3(pdf);
+	anr_pdf_page page1 = create_page_1(pdf);
+	anr_pdf_page page2 = create_page_2(pdf);
+	anr_pdf_page page3 = create_page_3(pdf);
+
+	anr_pdf_add_annotation_link(pdf, page1, bold_text_link, page2, NULL);
 
 	anr_pdf_document_end(pdf);
 	anr_pdf_write_to_file(pdf, "bin/test_pdf.pdf");

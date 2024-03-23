@@ -91,6 +91,8 @@
 #endif
 #endif
 
+#define ANR_PDF_PLACEHOLDER_REF "00000000"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -149,8 +151,22 @@ typedef struct
 {
 	anr_pdf_ref ref;
 	anr_pdf_page_size size;
-	uint64_t refoffset; // offset to parent reference.
+	uint64_t parentoffset; // offset to parent reference.
+	uint64_t annotoffset; // offset to annot array reference.
 } anr_pdf_page;
+
+typedef enum
+{
+	ANR_PDF_ANNOTATION_TEXT,
+	ANR_PDF_ANNOTATION_LINK,
+} anr_pdf_annot_type;
+
+typedef struct 
+{
+	anr_pdf_ref ref;
+	anr_pdf_page parent;
+	anr_pdf_annot_type type;
+} anr_pdf_annot;
 
 typedef struct
 {
@@ -259,13 +275,14 @@ typedef struct
 		anr_pdf_page_size size;
 		anr_pdf_ref objects[ANR_PDF_MAX_OBJECTS_PER_PAGE];
 		uint64_t objects_count;
-		anr_pdf_ref annotations[ANR_PDF_MAX_ANNOTATIONS_PER_PAGE];
-		uint64_t annotations_count;
 	} page;
 
 	// list of pages
 	anr_pdf_page pages[ANR_PDF_MAX_PAGES];
 	uint64_t page_count;
+
+	anr_pdf_annot all_annotations[ANR_PDF_MAX_ANNOTATIONS_PER_PAGE*ANR_PDF_MAX_PAGES];
+	uint64_t all_annotations_count;
 
 	// Standard objects
 	anr_pdf_ref pagetree_ref;
@@ -306,7 +323,9 @@ ANRPDFDEF void 			anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size);
 ANRPDFDEF anr_pdf_page 	anr_pdf_page_end(anr_pdf* pdf);
 ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns the size of the page in user space units. (inches * 72)
 
-ANRPDFDEF anr_pdf_ref 	anr_pdf_page_add_text_annotation(anr_pdf* pdf, anr_pdf_obj obj, char* text);
+// === ANNOTATION OPERATIONS ===
+ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text);
+ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj);
 
 // === OBJECT OPERATIONS ===
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
@@ -503,7 +522,7 @@ static void anr__append_xref_table(anr_pdf* pdf)
 	anr__pdf_append_printf(pdf, "\n%d", refxref+1);
 }
 
-static anr_pdf_ref anr__append_outlines(anr_pdf* pdf)
+static anr_pdf_ref anr__pdf_append_outlines(anr_pdf* pdf)
 {
 	anr_pdf_id id_offset = anr__peak_next_id(pdf); // ids for bookmarks will be index+id_offset
 
@@ -556,11 +575,20 @@ static anr_pdf_ref anr__append_outlines(anr_pdf* pdf)
 	return outlineref;
 }
 
+static void anr__pdf_replace_placeholder_id(anr_pdf* pdf, uint64_t offset, anr_pdf_ref ref)
+{
+	// We write the pdf in one go but some objects need to reference eachother.. :(
+	char idbuf[20];
+	sprintf(idbuf, "%" PRId64, ref.id);
+	int len = strlen(idbuf);
+	memcpy(pdf->body_buffer + offset + (sizeof(ANR_PDF_PLACEHOLDER_REF)-1-len), idbuf, len);
+}
+
 // Document catalog, see 7.7.2
-static void anr__append_document_catalog(anr_pdf* pdf) 
+static void anr__pdf_append_document_catalog(anr_pdf* pdf) 
 {
 	// Outlines
-	anr_pdf_ref outlineref = anr__append_outlines(pdf);
+	anr_pdf_ref outlineref = anr__pdf_append_outlines(pdf);
 
 	// Page tree
 	anr_pdf_ref treeref = anr__pdf_begin_obj(pdf);
@@ -586,13 +614,25 @@ static void anr__append_document_catalog(anr_pdf* pdf)
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
 
-	// Pages need reference to page tree. Yikes.
+	// Pages need reference to page tree.
 	for (uint64_t i = 0; i < pdf->page_count; i++)
 	{
-		char idbuf[20];
-		sprintf(idbuf, "%" PRId64, treeref.id);
-		int len = strlen(idbuf);
-		memcpy(pdf->body_buffer + pdf->pages[i].refoffset + (8-len), idbuf, len);
+		anr__pdf_replace_placeholder_id(pdf, pdf->pages[i].parentoffset, treeref);
+	}
+
+	// Pages need reference to annotation array.
+	for (uint64_t p = 0; p < pdf->page_count; p++)
+	{
+		anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+		anr__pdf_append_str(pdf, "\n[");
+		for (uint64_t i = 0; i < pdf->all_annotations_count; i++) {
+			if (pdf->all_annotations[i].parent.ref.id != pdf->pages[p].ref.id) continue;
+			anr__pdf_append_str_idref(pdf, "\n%d 0 R", pdf->all_annotations[i].ref);	
+		}
+		anr__pdf_append_str(pdf, "\n]");
+		anr__pdf_append_str(pdf, "\nendobj");
+
+		anr__pdf_replace_placeholder_id(pdf, pdf->pages[p].annotoffset, ref);
 	}
 
 	pdf->catalog_ref = docref;
@@ -605,7 +645,7 @@ static void anr__create_default_font(anr_pdf* pdf) {
 		anr__pdf_append_str(pdf, "\n/Subtype /Type1"); \
 		anr__pdf_append_str_idref(pdf, "\n/Name /F%d", fontref); \
 		anr__pdf_append_str(pdf, "\n/BaseFont /"_name); \
-		anr__pdf_append_str(pdf, "\n/Encoding /MacRomanEncoding"); \
+		anr__pdf_append_str(pdf, "\n/Encoding /WinAnsiEncoding"); \
 		anr__pdf_append_str(pdf, ">>"); \
 		anr__pdf_append_str(pdf, "\nendobj"); \
 		_container = fontref; \
@@ -649,7 +689,7 @@ void anr_pdf_document_free(anr_pdf* pdf)
 
 void anr_pdf_document_end(anr_pdf* pdf)
 {
-	anr__append_document_catalog(pdf);
+	anr__pdf_append_document_catalog(pdf);
 	anr__append_xref_table(pdf);
 	anr__pdf_append_str(pdf, "\n%%EOF\n");
 }
@@ -667,7 +707,6 @@ void anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size)
 	ANRPDF_ASSERT(pdf->page_count < ANR_PDF_MAX_PAGES);
 	pdf->page.is_written = 0;
 	pdf->page.objects_count = 0;
-	pdf->page.annotations_count = 0;
 	pdf->page.size = size;
 	// @Unimplemented: page rotation
 }
@@ -682,7 +721,7 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 
 	anr_pdf_ref pageref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n<</Type /Page");
-	uint64_t offset = anr__pdf_append_str(pdf, "\n/Parent 00000000 0 R"); // ref is set when pagetree is apended..
+	uint64_t offset = anr__pdf_append_str(pdf, "\n/Parent "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is apended..
 	anr__pdf_append_str_idref(pdf, "\n/Resources <</ProcSet %d 0 R", procsetref);
 
 	// Import all default fonts in page.
@@ -696,12 +735,7 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	
 	anr_pdf_vecf page_size = anr_pdf_page_get_size(pdf->page.size);
 	anr__pdf_append_printf(pdf, "\n/MediaBox [0 0 %.3f %.3f]", page_size.x, page_size.y);
-
-	// Add all annotations to annotation array.
-	anr__pdf_append_str(pdf, "\n/Annots [\n");
-	for (uint64_t i = 0; i < pdf->page.annotations_count; i++)
-		anr__pdf_append_str_idref(pdf, "%d 0 R\n", pdf->page.annotations[i]);
-	anr__pdf_append_str(pdf, "]");
+	uint64_t annotoffset = anr__pdf_append_str(pdf, "\n/Annots "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is apended..
 
 	// Add all objects to content array.
 	anr__pdf_append_str(pdf, "\n/Contents [\n");
@@ -710,7 +744,8 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	anr__pdf_append_str(pdf, "]>>");
 	anr__pdf_append_str(pdf, "\nendobj");
 
-	anr_pdf_page page = (anr_pdf_page){.ref = pageref, .size = pdf->page.size, .refoffset = offset+9};
+
+	anr_pdf_page page = (anr_pdf_page){.ref = pageref, .size = pdf->page.size, .parentoffset = offset+9, .annotoffset = annotoffset + 9};
 	pdf->pages[pdf->page_count++] = page;
 	pdf->page.is_written = 1;
 
@@ -845,9 +880,9 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 
 anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info) 
 {
-	//uint64_t str_len = strlen(text); // we need to calculate string width somehow
+	uint64_t str_len = strlen(text); // we need to calculate string width somehow
 	uint64_t stream_length = 0;
-	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, 0.0f, (float)info.font_size));
+	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, str_len*20, (float)info.font_size));
 	uint64_t write_start = anr__pdf_append_str(pdf, "\nBT");
 
 	// Use default regular font if no font given.
@@ -912,20 +947,49 @@ anr_pdf_vecf anr_pdf_page_get_size(anr_pdf_page_size size) {
 	return __anr_pdf_page_sizes[size];
 }
 
-anr_pdf_ref anr_pdf_page_add_text_annotation(anr_pdf* pdf, anr_pdf_obj obj, char* text)
-{
-	ANRPDF_ASSERT(pdf->page.annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
-	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
-	pdf->page.annotations[pdf->page.annotations_count++] = ref;
 
+anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj)
+{
+	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	
+	anr__pdf_append_str(pdf, "\n<</Type /Annot");
+	anr__pdf_append_str(pdf, "\n/Subtype /Link");
+	anr__pdf_append_printf(pdf, "\n/Rect [%.2f %.2f %.2f %.2f]", 
+		src_obj.rec.x, src_obj.rec.y, src_obj.rec.x + src_obj.rec.w, src_obj.rec.y - src_obj.rec.h);
+	if (dest_obj) {
+		anr__pdf_append_printf(pdf, "\n/Dest [%d 0 R /XYZ %f %f null]", dest_page.ref.id, dest_obj->rec.x, dest_obj->rec.y);
+	}
+	else {
+		anr_pdf_vecf psize = anr_pdf_page_get_size(dest_page.size);
+		anr__pdf_append_printf(pdf, "\n/Dest [%d 0 R /XYZ %f %f null]", dest_page.ref.id, 0, psize.y);
+	}
+	anr__pdf_append_str(pdf, "\n/Border [0 0 0 0]");
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	anr_pdf_annot annot = {.ref = ref, .parent = src_page};
+	pdf->all_annotations[pdf->all_annotations_count++] = annot;
+
+	return annot;
+}
+
+anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text)
+{
+	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	
 	anr__pdf_append_str(pdf, "\n<</Type /Annot");
 	anr__pdf_append_str(pdf, "\n/Subtype /Text");
-	anr__pdf_append_printf(pdf, "\n/Rect [%.2f %.2f %.2f %.2f]", obj.rec.x, obj.rec.y, obj.rec.x + obj.rec.w, obj.rec.y + obj.rec.h);
+	anr__pdf_append_printf(pdf, "\n/Rect [%.2f %.2f %.2f %.2f]", obj.rec.x, obj.rec.y, obj.rec.x + obj.rec.w, obj.rec.y - obj.rec.h);
 	anr__pdf_append_printf(pdf, "\n/Contents (%s)", text);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
-	
-	return ref;
+
+	anr_pdf_annot annot = {.ref = ref, .parent = page};
+	pdf->all_annotations[pdf->all_annotations_count++] = annot;
+
+	return annot;
 }
 
 anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj* item_on_page, 
