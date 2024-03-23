@@ -1,3 +1,5 @@
+#define ANR_PDF_BUFFER_RESERVE 10000
+
 #define ANR_PDF_IMPLEMENTATION
 #include "../anr_pdf.h"
 
@@ -170,17 +172,19 @@ static anr_pdf_page create_page_3(anr_pdf* pdf)
 
 int main()
 {
-	anr_pdf pdf = anr_pdf_document_begin(1000000);
-	anr_pdf_document_add_information_dictionary(&pdf, 
+	anr_pdf* pdf = anr_pdf_document_begin(1000000);
+	anr_pdf_document_add_information_dictionary(pdf, 
 		"Simple text document", "Aldrik", "Cool Banana's", 
 		"Text, Bananas", NULL, "anr_pdf Library", "20240318201500-00'00", NULL);
 
-	create_page_1(&pdf);
-	create_page_2(&pdf);
-	create_page_3(&pdf);
+	create_page_1(pdf);
+	create_page_2(pdf);
+	create_page_3(pdf);
 
-	anr_pdf_document_end(&pdf);
-	anr_pdf_write_to_file(&pdf, "bin/test_pdf.pdf");
+	anr_pdf_document_end(pdf);
+	anr_pdf_write_to_file(pdf, "bin/test_pdf.pdf");
+
+	anr_pdf_document_free(pdf);
 
 	return 0;
 }

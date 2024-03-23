@@ -1,5 +1,5 @@
 /*
-	anr_pdf.h - v0.1 - public domain pdf writer
+	anr_pdf->h - v0.1 - public domain pdf writer
 
 	This is a single-header-file library for writing pdf files.
 
@@ -30,12 +30,14 @@
 //
 //	IMPLEMENTED
 //		Text (fonts/sizes/colors/spacing)
-//		Bookmarks (see chapter 12.3.3)
+//		Bookmarks
 //		Primitives (lines/polygons/cubic beziers)
 //		Page & Document properties
+//		Annotations (text)
+//		Encoding (ASCIIHex)
 //
 //	UNIMPLEMENTED
-//		Primitives (rectangles/polygons/)
+//		Annotations (highlight/link/watermark)
 //		Text rotation
 //		Tables (using primitives)
 //		Images
@@ -58,6 +60,10 @@
 #ifndef ANRPDF_ASSERT
 #include <assert.h>
 #define ANRPDF_ASSERT(x) assert(x)
+#endif
+
+#ifndef ANR_PDF_BUFFER_RESERVE
+#define ANR_PDF_BUFFER_RESERVE 1000000
 #endif
 
 #ifndef ANR_PDF_MAX_PAGES
@@ -221,6 +227,13 @@ typedef struct
 #define ANR_PDF_TD_DEFAULT anr_pdf_td_default()
 #define ANR_PDF_GFX_DEFAULT anr_pdf_gfx_default()
 
+typedef enum
+{
+	ANR_PDF_STREAM_ENCODE_NONE,
+	ANR_PDF_STREAM_ENCODE_ASCIIHEX,
+	// @Unimplemented: Base85 encoding
+} anr_pdf_stream_encoding;
+
 typedef struct
 {
 	// Main data buffer
@@ -228,6 +241,10 @@ typedef struct
 	uint64_t body_write_cursor;
 	uint32_t buf_size;
 	uint64_t next_obj_id;
+
+	// Stream encoding state
+	anr_pdf_stream_encoding stream_encoding;
+	char writing_to_stream;
 
 	// Xref data
 	struct  {
@@ -271,13 +288,14 @@ typedef struct
 
 
 // === DOCUMENT OPERATIONS === 
-ANRPDFDEF anr_pdf 			anr_pdf_document_begin(uint32_t buf_size);
+ANRPDFDEF anr_pdf* 			anr_pdf_document_begin();
 ANRPDFDEF void 				anr_pdf_document_end(anr_pdf* pdf);
+ANRPDFDEF void 				anr_pdf_document_free(anr_pdf* pdf);
 ANRPDFDEF void 				anr_pdf_write_to_file(anr_pdf* pdf, const char* path);
 // item_on_page optional, parent optional.
 ANRPDFDEF anr_pdf_bookmark 	anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj* item_on_page, 
 								anr_pdf_bookmark* parent, const char* text); 
-// Add document information to the pdf. See chapter 14.3.3
+// Add document information to the pdf-> See chapter 14.3.3
 // Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm)
 ANRPDFDEF void 				anr_pdf_document_add_information_dictionary(anr_pdf* pdf, char* title, 
 								char* author, char* subject, char* keywords, char* creator, 
@@ -288,7 +306,9 @@ ANRPDFDEF void 			anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size);
 ANRPDFDEF anr_pdf_page 	anr_pdf_page_end(anr_pdf* pdf);
 ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns the size of the page in user space units. (inches * 72)
 
-// === OBJECT OPERATIONS === (@Unimplemented: Base85 encoded)
+ANRPDFDEF anr_pdf_ref 	anr_pdf_page_add_text_annotation(anr_pdf* pdf, anr_pdf_obj obj, char* text);
+
+// === OBJECT OPERATIONS ===
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
@@ -331,6 +351,63 @@ static char anr__pdf_ref_valid(anr_pdf_ref ref)
 	return ref.id > 0;
 }
 
+static char* anr__pdf_encode_asciihex(const char* src, char* dest, uint64_t src_size, uint64_t dest_size)
+{
+	for (uint64_t i = 0; i < src_size; i++) {
+		dest[i*2]   = "0123456789ABCDEF"[src[i] >> 4];
+		dest[i*2+1] = "0123456789ABCDEF"[src[i] & 0x0F];
+	}
+	return dest;
+}
+
+static uint64_t anr__pdf_append_bytes(anr_pdf* pdf, const char* bytes, uint64_t size)
+{
+	char encoded_data[size*2 + 1]; // asciihex uses at most size*2
+	char* ptr = (char*)encoded_data;
+
+	// Encode data
+	if (pdf->writing_to_stream) {
+		switch(pdf->stream_encoding) {
+			case ANR_PDF_STREAM_ENCODE_NONE: ptr = (char*)bytes; break;
+			case ANR_PDF_STREAM_ENCODE_ASCIIHEX: 
+				ptr = anr__pdf_encode_asciihex(bytes, ptr, size, sizeof(encoded_data));				
+				size = size*2;
+			break;
+		}
+	}
+	else {
+		ptr = (char*)bytes;
+	}
+
+	// check buffer bounds
+	if (pdf->body_write_cursor + size >= pdf->buf_size)
+	{
+		realloc(pdf->body_buffer, pdf->buf_size + ANR_PDF_BUFFER_RESERVE);
+		pdf->buf_size += ANR_PDF_BUFFER_RESERVE;
+	}
+
+	memcpy(pdf->body_buffer + pdf->body_write_cursor, ptr, size);
+	uint64_t result = pdf->body_write_cursor;
+	pdf->body_write_cursor += size;
+	return result;
+}
+
+static uint64_t anr__pdf_append_str(anr_pdf* pdf, const char* bytes)
+{
+	uint64_t length = strlen(bytes);
+	return anr__pdf_append_bytes(pdf, bytes, length);
+}
+
+static uint64_t anr__pdf_append_str_idref(anr_pdf* pdf, const char* bytes, anr_pdf_ref ref)
+{
+	char formatted_str[300];
+	sprintf(formatted_str, bytes, ref.id);
+
+	uint64_t length = strlen(formatted_str);
+	uint64_t result = anr__pdf_append_bytes(pdf, formatted_str, length);
+	return result;
+}
+
 static uint64_t anr__pdf_append_printf(anr_pdf* pdf, const char *fmt, ...)
 {
     va_list ap;
@@ -340,41 +417,10 @@ static uint64_t anr__pdf_append_printf(anr_pdf* pdf, const char *fmt, ...)
 	vsnprintf(formatted_str, 300, fmt, ap);
 
 	uint64_t length = strlen(formatted_str);
-	memcpy(pdf->body_buffer + pdf->body_write_cursor, formatted_str, (uint64_t)length);
-	uint64_t result = pdf->body_write_cursor;
-	pdf->body_write_cursor += length;
+	uint64_t result = anr__pdf_append_bytes(pdf, formatted_str, length);
 
     va_end(ap);
     return result;
-}
-
-static uint64_t anr__pdf_append_str_idref(anr_pdf* pdf, const char* bytes, anr_pdf_ref ref)
-{
-	char formatted_str[300];
-	sprintf(formatted_str, bytes, ref.id);
-
-	uint64_t length = strlen(formatted_str);
-	memcpy(pdf->body_buffer + pdf->body_write_cursor, formatted_str, (uint64_t)length);
-	uint64_t result = pdf->body_write_cursor;
-	pdf->body_write_cursor += length;
-	return result;
-}
-
-static uint64_t anr__pdf_append_str(anr_pdf* pdf, const char* bytes)
-{
-	uint64_t length = strlen(bytes);
-	memcpy(pdf->body_buffer + pdf->body_write_cursor, bytes, (uint64_t)length);
-	uint64_t result = pdf->body_write_cursor;
-	pdf->body_write_cursor += length;
-	return result;
-}
-
-static uint64_t anr__pdf_append_bytes(anr_pdf* pdf, const char* bytes, uint64_t size)
-{
-	memcpy(pdf->body_buffer + pdf->body_write_cursor, bytes, size);
-	uint64_t result = pdf->body_write_cursor;
-	pdf->body_write_cursor += size;
-	return result;
 }
 
 static anr_pdf_id anr__peak_next_id(anr_pdf* pdf)
@@ -402,14 +448,37 @@ static anr_pdf_ref anr__pdf_begin_obj(anr_pdf* pdf)
 	return (anr_pdf_ref){.id = id, .offset_in_body = pdf->body_write_cursor};
 }
 
+static uint64_t anr__pdf_end_content_obj(anr_pdf* pdf)
+{
+	pdf->writing_to_stream = 0;
+
+	// Some encodings have EOD sign
+	switch(pdf->stream_encoding)
+	{
+		case ANR_PDF_STREAM_ENCODE_NONE: break;
+		case ANR_PDF_STREAM_ENCODE_ASCIIHEX: anr__pdf_append_str(pdf, ">"); break;
+	}
+
+	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
+	anr__pdf_append_str(pdf, "\nendobj");
+	return write_end;
+}
+
 static anr_pdf_obj anr__pdf_begin_content_obj(anr_pdf* pdf, anr_pdf_recf rec)
 {
 	ANRPDF_ASSERT(!pdf->page.is_written);
 	ANRPDF_ASSERT(pdf->page.objects_count < ANR_PDF_MAX_OBJECTS_PER_PAGE);
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
 	anr_pdf_id streamlen_id = anr__peak_next_id(pdf); // next object is stream length
-	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R >>", (anr_pdf_ref){.id=streamlen_id});
-	anr__pdf_append_str(pdf, "\nstream");
+	anr__pdf_append_str_idref(pdf, "\n<< /Length %d 0 R", (anr_pdf_ref){.id=streamlen_id});
+	switch(pdf->stream_encoding)
+	{
+		case ANR_PDF_STREAM_ENCODE_NONE: break;
+		case ANR_PDF_STREAM_ENCODE_ASCIIHEX: anr__pdf_append_str(pdf, "\n/Filter /ASCIIHexDecode"); break;
+	}
+
+	anr__pdf_append_str(pdf, ">>\nstream\n");
+	pdf->writing_to_stream = 1;
 	anr_pdf_obj objref = {.ref = ref, .rec = rec};
 	pdf->page.objects[pdf->page.objects_count++] = ref;
 	return objref;
@@ -548,25 +617,34 @@ static void anr__create_default_font(anr_pdf* pdf) {
 	LOAD_FONT("Times-BoldItalic", pdf->default_font_italic_bold_ref);
 }
 
-anr_pdf anr_pdf_document_begin(uint32_t buf_size)
+anr_pdf* anr_pdf_document_begin()
 {
-	anr_pdf pdf = {0};
-	pdf.body_buffer = malloc(buf_size);
-	pdf.buf_size = buf_size;
-	pdf.body_write_cursor = 0;
-	pdf.next_obj_id = 1;
-	pdf.doc_info_dic_ref = anr__pdf_emptyref();
+	anr_pdf* pdf = malloc(sizeof(anr_pdf));
+	memset(pdf, 0, sizeof(anr_pdf));
+	pdf->body_buffer = malloc(ANR_PDF_BUFFER_RESERVE);
+	pdf->buf_size = ANR_PDF_BUFFER_RESERVE;
+	pdf->body_write_cursor = 0;
+	pdf->next_obj_id = 1;
+	pdf->doc_info_dic_ref = anr__pdf_emptyref();
+	pdf->stream_encoding = ANR_PDF_STREAM_ENCODE_ASCIIHEX;
+	pdf->writing_to_stream = 0;
 
-	pdf.xref.buffer = malloc(buf_size);
-	pdf.xref.write_cursor = 0;
-	pdf.xref.buf_size = buf_size;
+	pdf->xref.buffer = malloc(ANR_PDF_BUFFER_RESERVE);
+	pdf->xref.write_cursor = 0;
+	pdf->xref.buf_size = ANR_PDF_BUFFER_RESERVE;
 
-	pdf.page.is_written = 1;
+	pdf->page.is_written = 1;
 
-	anr__pdf_append_str(&pdf, "%PDF-1.7");
-	anr__create_default_font(&pdf);
+	anr__pdf_append_str(pdf, "%PDF-1.7");
+	anr__create_default_font(pdf);
 
 	return pdf;
+}
+
+void anr_pdf_document_free(anr_pdf* pdf)
+{
+	free(pdf->body_buffer);
+	free(pdf);
 }
 
 void anr_pdf_document_end(anr_pdf* pdf)
@@ -695,8 +773,7 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	anr__pdf_append_printf(pdf, "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
-	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
-	anr__pdf_append_str(pdf, "\nendobj");
+	uint64_t write_end = anr__pdf_end_content_obj(pdf);
 
 	stream_length = write_end - write_start;
 
@@ -754,8 +831,7 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 	anr__pdf_append_printf(pdf, "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
-	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
-	anr__pdf_append_str(pdf, "\nendobj");
+	uint64_t write_end = anr__pdf_end_content_obj(pdf);
 
 	stream_length = write_end - write_start;
 
@@ -794,9 +870,7 @@ anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, a
 	anr__pdf_append_str(pdf, "\n) Tj");
 	anr__pdf_append_str(pdf, "\nET");
 
-	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
-	anr__pdf_append_str(pdf, "\nendobj");
-
+	uint64_t write_end = anr__pdf_end_content_obj(pdf);
 	stream_length = write_end - write_start;
 
 	// Object containing stream length.
