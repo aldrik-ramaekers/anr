@@ -1,4 +1,4 @@
-#define ANR_PDF_BUFFER_RESERVE 1000000
+#define ANR_PDF_BUFFER_RESERVE 100000
 
 #define ANR_PDF_IMPLEMENTATION
 #include "../anr_pdf.h"
@@ -11,7 +11,7 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 {
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
 
-	anr_pdf_td info = anr_pdf_td_default(pdf);
+	anr_pdf_txt_conf info = anr_pdf_txt_conf_default(pdf);
 
 	#define NEXT_LINE size.y -= 15;
 	anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
@@ -79,7 +79,10 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 	anr_pdf_bookmark bm1 = anr_pdf_document_add_bookmark(pdf, pageref, NULL, NULL, "Chapter 1");
 	anr_pdf_document_add_bookmark(pdf, pageref, &bold_text_link, &bm1, "Chapter 1.1");
 
-	anr_pdf_add_annotation_text(pdf, pageref, bold_text_link, "This text has an annotation");
+	anr_pdf_annot_cnf annot = ANR_PDF_ANNOT_CONF_DEFAULT;
+	annot.color = ANR_PDF_RGB(1.0f, 0.0f, 0.0f);
+	annot.posted_by = "John";
+	anr_pdf_add_annotation_text(pdf, pageref, bold_text_link, "This text has an annotation", annot);
 
 	return pageref;
 }
@@ -87,12 +90,13 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 static anr_pdf_page create_page_2(anr_pdf* pdf)
 {
 	anr_pdf_obj line_ref;
+	anr_pdf_obj text_ref;
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
 	{
 		anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
 	
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.line_join = ANR_PDF_LINEJOIN_MITER;
@@ -113,7 +117,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.color = ANR_PDF_RGB(0.0f, 0.3f, 0.5f);
@@ -132,7 +136,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 4;
 			gfx.color = ANR_PDF_RGB(0.0f, 1.0f, 0.0f);
@@ -146,17 +150,27 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_DEFAULT;
+			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.color = ANR_PDF_RGB(1.0f, 1.0f, 0.0f);
 			anr_pdf_add_line(pdf, (anr_pdf_vecf){350.0f, 700.0f}, (anr_pdf_vecf){350.0f, 100.0f}, gfx);
 		}
 
-		anr_pdf_add_text(pdf, "This page has some weird shapes...", 300, 500, ANR_PDF_TD_DEFAULT);
+		text_ref = anr_pdf_add_text(pdf, "This page has some weird shapes...", 300, 500, ANR_PDF_TXT_CONF_DEFAULT);
 	}
 
 	anr_pdf_page pageref = anr_pdf_page_end(pdf);
+
+	anr_pdf_annot_cnf annot = ANR_PDF_ANNOT_CONF_DEFAULT;
+	annot.post_date = "20240323201500-00'00";
+	annot.posted_by = "Aldrik";
+	anr_pdf_annot root = anr_pdf_add_annotation_markup(pdf, pageref, text_ref, "This text is highlighted", ANR_PDF_ANNOTATION_MARKUP_HIGHLIGHT, annot);
+
+	annot = ANR_PDF_ANNOT_CONF_DEFAULT;
+	annot.posted_by = "Joe";
+	annot.parent = root;
+	anr_pdf_add_annotation_text(pdf, pageref, text_ref, "But I dont like the color..", annot);
 
 	anr_pdf_bookmark bm2 = anr_pdf_document_add_bookmark(pdf, pageref, NULL, NULL, "Chapter 2");
 	anr_pdf_document_add_bookmark(pdf, pageref, &line_ref, &bm2, "Chapter 2.1");
@@ -183,7 +197,7 @@ int main()
 	anr_pdf_page page2 = create_page_2(pdf);
 	anr_pdf_page page3 = create_page_3(pdf);
 
-	anr_pdf_add_annotation_link(pdf, page1, bold_text_link, page2, NULL);
+	anr_pdf_add_annotation_link(pdf, page1, bold_text_link, page2, NULL, ANR_PDF_ANNOT_CONF_DEFAULT);
 
 	anr_pdf_document_end(pdf);
 	anr_pdf_write_to_file(pdf, "bin/test_pdf.pdf");

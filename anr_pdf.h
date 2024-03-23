@@ -33,11 +33,11 @@
 //		Bookmarks
 //		Primitives (lines/polygons/cubic beziers)
 //		Page & Document properties
-//		Annotations (text)
+//		Annotations (text/link/markup) + annotation threads
 //		Encoding (ASCIIHex)
 //
 //	UNIMPLEMENTED
-//		Annotations (highlight/link/watermark)
+//		Annotations (watermark)
 //		Text rotation
 //		Tables (using primitives)
 //		Images
@@ -210,7 +210,7 @@ typedef struct
 	int render_mode; // default 0 (see table 106)
 	float rise; // default 0, can be negative
 	anr_pdf_color color; // default black
-} anr_pdf_td;
+} anr_pdf_txt_conf;
 
 typedef enum
 {
@@ -226,6 +226,14 @@ typedef enum
 	ANR_PDF_LINEJOIN_BEVEL = 2,
 } anr_pdf_linejoin_style;
 
+typedef enum
+{
+	ANR_PDF_ANNOTATION_MARKUP_HIGHLIGHT,
+	ANR_PDF_ANNOTATION_MARKUP_UNDERLINE,
+	ANR_PDF_ANNOTATION_MARKUP_SQUIGGLY,
+	ANR_PDF_ANNOTATION_MARKUP_STRIKEOUT,
+} anr_pdf_annotation_markup_type;
+
 // See Table 52
 // Parameters for all graphics.
 typedef struct
@@ -240,8 +248,18 @@ typedef struct
 	// @Unimplemented: option to fill path with color
 } anr_pdf_gfx;
 
-#define ANR_PDF_TD_DEFAULT anr_pdf_td_default()
-#define ANR_PDF_GFX_DEFAULT anr_pdf_gfx_default()
+// Parameters for annotations. all optional.
+typedef struct
+{
+	char* posted_by; // default NULL
+	char* post_date; // default NULL
+	anr_pdf_color color; // default yellow
+	anr_pdf_annot parent; // default none
+} anr_pdf_annot_cnf;
+
+#define ANR_PDF_TXT_CONF_DEFAULT anr_pdf_txt_conf_default()
+#define ANR_PDF_GFX_CONF_DEFAULT anr_pdf_gfx_conf_default()
+#define ANR_PDF_ANNOT_CONF_DEFAULT anr_pdf_annot_conf_default()
 
 typedef enum
 {
@@ -324,18 +342,19 @@ ANRPDFDEF anr_pdf_page 	anr_pdf_page_end(anr_pdf* pdf);
 ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns the size of the page in user space units. (inches * 72)
 
 // === ANNOTATION OPERATIONS ===
-ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text);
-ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj);
+ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annot_cnf data);
+ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, 
+													anr_pdf_obj* dest_obj, anr_pdf_annot_cnf data);
 
 // === OBJECT OPERATIONS ===
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 
 // === DEFAULT CONFIGS === 
-ANRPDFDEF anr_pdf_td	anr_pdf_td_default();
-ANRPDFDEF anr_pdf_gfx	anr_pdf_gfx_default();
+ANRPDFDEF anr_pdf_txt_conf	anr_pdf_txt_conf_default();
+ANRPDFDEF anr_pdf_gfx	anr_pdf_gfx_conf_default();
 
 ////   end header file   /////////////////////////////////////////////////////
 #endif // End of INCLUDE_ANR_PDF_H
@@ -401,8 +420,9 @@ static uint64_t anr__pdf_append_bytes(anr_pdf* pdf, const char* bytes, uint64_t 
 	// check buffer bounds
 	if (pdf->body_write_cursor + size >= pdf->buf_size)
 	{
-		realloc(pdf->body_buffer, pdf->buf_size + ANR_PDF_BUFFER_RESERVE);
+		printf("%d realloc\n", (int)pdf->body_write_cursor);
 		pdf->buf_size += ANR_PDF_BUFFER_RESERVE;
+		pdf->body_buffer = realloc(pdf->body_buffer, pdf->buf_size);
 	}
 
 	memcpy(pdf->body_buffer + pdf->body_write_cursor, ptr, size);
@@ -752,15 +772,20 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	return page;
 }
 
-anr_pdf_td anr_pdf_td_default()
+anr_pdf_txt_conf anr_pdf_txt_conf_default()
 {
-	return (anr_pdf_td){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),0, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}};
+	return (anr_pdf_txt_conf){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),0, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}};
 }
 
-anr_pdf_gfx anr_pdf_gfx_default()
+anr_pdf_gfx anr_pdf_gfx_conf_default()
 {
 	return (anr_pdf_gfx){.line_cap = ANR_PDF_LINECAP_BUTT, .line_width = 0, .line_join = ANR_PDF_LINEJOIN_MITER, 
 		.miter_limit = 10, .dash_pattern = {0}, .color = ANR_PDF_RGB(0.0f,0.0f,0.0f)};
+}
+
+anr_pdf_annot_cnf anr_pdf_annot_conf_default()
+{
+	return (anr_pdf_annot_cnf){.color=ANR_PDF_RGB(1.0f, 1.0f, 0.0f), .parent = {.ref.id = 0}, .post_date = NULL, .posted_by = NULL};
 }
 
 anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
@@ -878,11 +903,11 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 	return obj_ref;
 }
 
-anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_td info) 
+anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info) 
 {
 	uint64_t str_len = strlen(text); // we need to calculate string width somehow
 	uint64_t stream_length = 0;
-	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, str_len*20, (float)info.font_size));
+	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, str_len*5, (float)info.font_size));
 	uint64_t write_start = anr__pdf_append_str(pdf, "\nBT");
 
 	// Use default regular font if no font given.
@@ -947,8 +972,22 @@ anr_pdf_vecf anr_pdf_page_get_size(anr_pdf_page_size size) {
 	return __anr_pdf_page_sizes[size];
 }
 
+static void anr__pdf_add_optional_annotation_data(anr_pdf* pdf, anr_pdf_annot_cnf data)
+{
+	if (data.posted_by) {
+		anr__pdf_append_printf(pdf, "\n/T (%s)", data.posted_by);
+	}
+	if (anr__pdf_ref_valid(data.parent.ref)) {
+		anr__pdf_append_str(pdf, "\n/RT /R");
+		anr__pdf_append_str_idref(pdf, "\n/IRT %d 0 R", data.parent.ref);
+	}
+	if (data.post_date) {
+		anr__pdf_append_printf(pdf, "\n/M (D:%s)", data.post_date);
+	}
+	anr__pdf_append_printf(pdf, "\n/C [%.2f %.2f %.2f]", data.color.r, data.color.g, data.color.b);
+}
 
-anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj)
+anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj, anr_pdf_annot_cnf data)
 {
 	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
@@ -965,6 +1004,7 @@ anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, a
 		anr__pdf_append_printf(pdf, "\n/Dest [%d 0 R /XYZ %f %f null]", dest_page.ref.id, 0, psize.y);
 	}
 	anr__pdf_append_str(pdf, "\n/Border [0 0 0 0]");
+	anr__pdf_add_optional_annotation_data(pdf, data);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
 
@@ -974,7 +1014,43 @@ anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, a
 	return annot;
 }
 
-anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text)
+anr_pdf_annot anr_pdf_add_annotation_markup(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annotation_markup_type type, anr_pdf_annot_cnf data)
+{
+	// @Unimplemented: annotation threads, see chapter 12.5.6.3, for all annotations.
+	// @Unimplemented: identity of user that made annotation, key T, see table 170
+	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	
+	anr__pdf_append_str(pdf, "\n<</Type /Annot");
+	switch(type) {
+		case ANR_PDF_ANNOTATION_MARKUP_HIGHLIGHT: anr__pdf_append_str(pdf, "\n/Subtype /Highlight"); break;
+		case ANR_PDF_ANNOTATION_MARKUP_UNDERLINE: anr__pdf_append_str(pdf, "\n/Subtype /Underline"); break;
+		case ANR_PDF_ANNOTATION_MARKUP_SQUIGGLY: anr__pdf_append_str(pdf, "\n/Subtype /Squiggly"); break;
+		case ANR_PDF_ANNOTATION_MARKUP_STRIKEOUT: anr__pdf_append_str(pdf, "\n/Subtype /StrikeOut"); break;
+	}	
+	anr__pdf_append_printf(pdf, "\n/Rect [%.2f %.2f %.2f %.2f]", obj.rec.x, obj.rec.y, obj.rec.x + obj.rec.w, obj.rec.y - obj.rec.h);
+	obj.rec.y -= 2;
+	anr__pdf_append_printf(pdf, "\n/QuadPoints [%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f]", 
+		obj.rec.x, 
+		obj.rec.y - obj.rec.h, 
+		obj.rec.x + obj.rec.w,
+		obj.rec.y - obj.rec.h, 
+		obj.rec.x, 
+		obj.rec.y,	
+		obj.rec.x + obj.rec.w, 
+		obj.rec.y);
+	anr__pdf_add_optional_annotation_data(pdf, data);
+	anr__pdf_append_printf(pdf, "\n/Contents(%s)", text);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	anr_pdf_annot annot = {.ref = ref, .parent = page};
+	pdf->all_annotations[pdf->all_annotations_count++] = annot;
+
+	return annot;
+}
+
+anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annot_cnf data)
 {
 	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
@@ -983,6 +1059,7 @@ anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_p
 	anr__pdf_append_str(pdf, "\n/Subtype /Text");
 	anr__pdf_append_printf(pdf, "\n/Rect [%.2f %.2f %.2f %.2f]", obj.rec.x, obj.rec.y, obj.rec.x + obj.rec.w, obj.rec.y - obj.rec.h);
 	anr__pdf_append_printf(pdf, "\n/Contents (%s)", text);
+	anr__pdf_add_optional_annotation_data(pdf, data);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
 
