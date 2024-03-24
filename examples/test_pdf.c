@@ -1,4 +1,7 @@
-#define ANR_PDF_BUFFER_RESERVE 100000
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
+#define ANR_PDF_BUFFER_RESERVE 100000000
 
 #define ANR_PDF_IMPLEMENTATION
 #include "../anr_pdf.h"
@@ -71,7 +74,7 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 	info.font = pdf->default_font_ref;
 
 	info.font = pdf->default_font_italic_bold_ref;
-	NEXT_LINE; bold_text_link = anr_pdf_add_text(pdf, "This is bold italic text", 10, size.y, info);
+	NEXT_LINE; bold_text_link = anr_pdf_add_text(pdf, "This is a link in static bold text", 10, size.y, info);
 	info.font = pdf->default_font_ref;
 
  	anr_pdf_page pageref = anr_pdf_page_end(pdf);
@@ -158,6 +161,24 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		text_ref = anr_pdf_add_text(pdf, "This page has some weird shapes...", 300, 500, ANR_PDF_TXT_CONF_DEFAULT);
+
+		{
+			int w, h, bbs;
+			unsigned char *data = stbi_load("greenland_grid_velo.bmp", &w, &h, &bbs, 3);	
+			printf("Bmp greenland: %d %d %d\n", w, h, bbs);
+
+			anr_pdf_img img = anr_pdf_embed_image_data(pdf, data, w*h*bbs, w, h, 8);
+			anr_pdf_add_image(pdf, img, 0, 200, size.x/4, size.y/4);
+		}
+
+		{
+			int w, h, bbs;
+			unsigned char *data = stbi_load("spongebob.png", &w, &h, &bbs,3);
+			printf("Bmp greenland: %d %d %d\n", w, h, bbs);
+
+			anr_pdf_img img = anr_pdf_embed_image_data(pdf, data, w*h*3, w, h, 8);
+			anr_pdf_add_image(pdf, img, 400, 200, size.x/4, size.y/4);
+		}
 	}
 
 	anr_pdf_page pageref = anr_pdf_page_end(pdf);

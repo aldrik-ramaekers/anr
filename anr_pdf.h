@@ -23,7 +23,7 @@
 //	This library follows the pdf 1.7 ISO 32000-1 standard
 //	https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf
 //
-//	Coordinates & font size are denoted in user space units. (inch / 72).
+//	Coordinates & size are denoted in user space units. (inch / 72).
 //	When positioning objects, xy (0, 0) is on the bottomleft of the page.
 //
 //	Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm)
@@ -154,6 +154,14 @@ typedef struct
 	uint64_t parentoffset; // offset to parent reference.
 	uint64_t annotoffset; // offset to annot array reference.
 } anr_pdf_page;
+
+typedef struct
+{
+	anr_pdf_ref ref;
+	char id[7]; // ImXXXX
+	uint32_t width;
+	uint32_t height;
+} anr_pdf_img;
 
 typedef enum
 {
@@ -293,6 +301,8 @@ typedef struct
 		anr_pdf_page_size size;
 		anr_pdf_ref objects[ANR_PDF_MAX_OBJECTS_PER_PAGE];
 		uint64_t objects_count;
+		anr_pdf_img images[ANR_PDF_MAX_OBJECTS_PER_PAGE];
+		uint32_t images_count;
 	} page;
 
 	// list of pages
@@ -331,7 +341,7 @@ ANRPDFDEF void 				anr_pdf_write_to_file(anr_pdf* pdf, const char* path);
 ANRPDFDEF anr_pdf_bookmark 	anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj* item_on_page, 
 								anr_pdf_bookmark* parent, const char* text); 
 // Add document information to the pdf-> See chapter 14.3.3
-// Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm)
+// Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm) @Unimplemented: create helper function for this
 ANRPDFDEF void 				anr_pdf_document_add_information_dictionary(anr_pdf* pdf, char* title, 
 								char* author, char* subject, char* keywords, char* creator, 
 								char* producer, char* creation_date, char* mod_date);
@@ -342,9 +352,9 @@ ANRPDFDEF anr_pdf_page 	anr_pdf_page_end(anr_pdf* pdf);
 ANRPDFDEF anr_pdf_vecf	anr_pdf_page_get_size(anr_pdf_page_size size); // Returns the size of the page in user space units. (inches * 72)
 
 // === ANNOTATION OPERATIONS ===
+ANRPDFDEF anr_pdf_annot	anr_pdf_add_annotation_markup(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annotation_markup_type type, anr_pdf_annot_cnf data);
 ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annot_cnf data);
-ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, 
-													anr_pdf_obj* dest_obj, anr_pdf_annot_cnf data);
+ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj, anr_pdf_annot_cnf data);
 
 // === OBJECT OPERATIONS ===
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info);
@@ -352,9 +362,13 @@ ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_v
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
 
+// Image data is assumed to be in rgb color space. 3 samples per pixel.
+ANRPDFDEF anr_pdf_img 	anr_pdf_embed_image_data(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample);
+
 // === DEFAULT CONFIGS === 
-ANRPDFDEF anr_pdf_txt_conf	anr_pdf_txt_conf_default();
-ANRPDFDEF anr_pdf_gfx	anr_pdf_gfx_conf_default();
+ANRPDFDEF anr_pdf_txt_conf		anr_pdf_txt_conf_default();
+ANRPDFDEF anr_pdf_gfx			anr_pdf_gfx_conf_default();
+ANRPDFDEF anr_pdf_annot_cnf		anr_pdf_annot_conf_default();
 
 ////   end header file   /////////////////////////////////////////////////////
 #endif // End of INCLUDE_ANR_PDF_H
@@ -400,7 +414,7 @@ static char* anr__pdf_encode_asciihex(const char* src, char* dest, uint64_t src_
 
 static uint64_t anr__pdf_append_bytes(anr_pdf* pdf, const char* bytes, uint64_t size)
 {
-	char encoded_data[size*2 + 1]; // asciihex uses at most size*2
+	char* encoded_data = malloc(size*2 + 1); // asciihex uses at most size*2
 	char* ptr = (char*)encoded_data;
 
 	// Encode data
@@ -418,9 +432,8 @@ static uint64_t anr__pdf_append_bytes(anr_pdf* pdf, const char* bytes, uint64_t 
 	}
 
 	// check buffer bounds
-	if (pdf->body_write_cursor + size >= pdf->buf_size)
+	while (pdf->body_write_cursor + size >= pdf->buf_size)
 	{
-		printf("%d realloc\n", (int)pdf->body_write_cursor);
 		pdf->buf_size += ANR_PDF_BUFFER_RESERVE;
 		pdf->body_buffer = realloc(pdf->body_buffer, pdf->buf_size);
 	}
@@ -428,6 +441,7 @@ static uint64_t anr__pdf_append_bytes(anr_pdf* pdf, const char* bytes, uint64_t 
 	memcpy(pdf->body_buffer + pdf->body_write_cursor, ptr, size);
 	uint64_t result = pdf->body_write_cursor;
 	pdf->body_write_cursor += size;
+	free(encoded_data);
 	return result;
 }
 
@@ -469,16 +483,24 @@ static anr_pdf_id anr__peak_next_id(anr_pdf* pdf)
 
 static anr_pdf_ref anr__pdf_begin_obj(anr_pdf* pdf)
 {
+	#define XREF_ENTRY_SIZE 20
 	anr_pdf_id id = pdf->next_obj_id++;
-	char xref_entry[20];
-	memcpy(xref_entry, "0000000000 00000 n \n", 20);
+	char xref_entry[XREF_ENTRY_SIZE];
+	memcpy(xref_entry, "0000000000 00000 n \n", XREF_ENTRY_SIZE);
 
 	char offset_str[11];
 	sprintf(offset_str, "%" PRId64 , pdf->body_write_cursor);
 	memcpy(xref_entry + 10 - strlen(offset_str), offset_str, strlen(offset_str));
 
-	memcpy(pdf->xref.buffer + pdf->xref.write_cursor, xref_entry, 20);
-	pdf->xref.write_cursor += 20;
+	// check buffer bounds
+	while (pdf->xref.write_cursor + XREF_ENTRY_SIZE >= pdf->xref.buf_size)
+	{
+		pdf->xref.buf_size += ANR_PDF_BUFFER_RESERVE;
+		pdf->xref.buffer = realloc(pdf->xref.buffer, pdf->xref.buf_size);
+	}
+
+	memcpy(pdf->xref.buffer + pdf->xref.write_cursor, xref_entry, XREF_ENTRY_SIZE);
+	pdf->xref.write_cursor += XREF_ENTRY_SIZE;
 
 	char newobj_entry[30];
 	sprintf(newobj_entry, "\n%" PRId64 " 0 obj", id);
@@ -686,7 +708,7 @@ anr_pdf* anr_pdf_document_begin()
 	pdf->body_write_cursor = 0;
 	pdf->next_obj_id = 1;
 	pdf->doc_info_dic_ref = anr__pdf_emptyref();
-	pdf->stream_encoding = ANR_PDF_STREAM_ENCODE_ASCIIHEX;
+	pdf->stream_encoding = ANR_PDF_STREAM_ENCODE_NONE;
 	pdf->writing_to_stream = 0;
 
 	pdf->xref.buffer = malloc(ANR_PDF_BUFFER_RESERVE);
@@ -704,6 +726,7 @@ anr_pdf* anr_pdf_document_begin()
 void anr_pdf_document_free(anr_pdf* pdf)
 {
 	free(pdf->body_buffer);
+	free(pdf->xref.buffer);
 	free(pdf);
 }
 
@@ -727,6 +750,7 @@ void anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size)
 	ANRPDF_ASSERT(pdf->page_count < ANR_PDF_MAX_PAGES);
 	pdf->page.is_written = 0;
 	pdf->page.objects_count = 0;
+	pdf->page.images_count = 0;
 	pdf->page.size = size;
 	// @Unimplemented: page rotation
 }
@@ -750,9 +774,18 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_italic_ref.id, pdf->default_font_italic_ref.id);
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_bold_ref.id, pdf->default_font_bold_ref.id);
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_italic_bold_ref.id, pdf->default_font_italic_bold_ref.id);
-	anr__pdf_append_str(pdf, "\n>>>>");
+	anr__pdf_append_str(pdf, "\n>>");
 
-	
+	// Add all images to xobject array.
+	if (pdf->page.images_count) {
+		anr__pdf_append_str(pdf, "\n/XObject <<\n");
+		for (uint64_t i = 0; i < pdf->page.images_count; i++)
+			anr__pdf_append_printf(pdf, "/%s %" PRId64 " 0 R\n", pdf->page.images[i].id, pdf->page.images[i].ref.id);
+		anr__pdf_append_str(pdf, "\n>>");
+	}
+
+	anr__pdf_append_str(pdf, "\n>>");
+
 	anr_pdf_vecf page_size = anr_pdf_page_get_size(pdf->page.size);
 	anr__pdf_append_printf(pdf, "\n/MediaBox [0 0 %.3f %.3f]", page_size.x, page_size.y);
 	uint64_t annotoffset = anr__pdf_append_str(pdf, "\n/Annots "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is apended..
@@ -762,6 +795,7 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	for (uint64_t i = 0; i < pdf->page.objects_count; i++)
 		anr__pdf_append_str_idref(pdf, "%d 0 R\n", pdf->page.objects[i]);
 	anr__pdf_append_str(pdf, "]>>");
+
 	anr__pdf_append_str(pdf, "\nendobj");
 
 
@@ -1016,8 +1050,6 @@ anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, a
 
 anr_pdf_annot anr_pdf_add_annotation_markup(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annotation_markup_type type, anr_pdf_annot_cnf data)
 {
-	// @Unimplemented: annotation threads, see chapter 12.5.6.3, for all annotations.
-	// @Unimplemented: identity of user that made annotation, key T, see table 170
 	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_ANNOTATIONS_PER_PAGE);
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
 	
@@ -1125,6 +1157,56 @@ anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, 
 	pdf->bookmarks[pdf->bookmark_count++] = bookmark;
 
 	return bookmark;
+}
+
+anr_pdf_img anr_pdf_embed_image_data(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample)
+{
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	
+	anr__pdf_append_str(pdf, "\n<</Type /XObject");
+	anr__pdf_append_str(pdf, "\n/Subtype /Image");
+	anr__pdf_append_printf(pdf, "\n/Width %d", width);
+	anr__pdf_append_printf(pdf, "\n/Height %d", height);
+	anr__pdf_append_str(pdf, "\n/ColorSpace /DeviceRGB");
+	anr__pdf_append_printf(pdf, "\n/BitsPerComponent %d", bits_per_sample);
+	anr__pdf_append_str(pdf, "\n/ComponentsPerSample 4");
+	anr__pdf_append_str(pdf, "\n/Interpolate true");
+	anr__pdf_append_printf(pdf, "\n/Length %d", length);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nstream\n");
+	anr__pdf_append_bytes(pdf, (char*)data, length);
+	anr__pdf_append_str(pdf, "\nendstream");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	return (anr_pdf_img){.ref = ref, .width = width, .height = height};
+}
+
+anr_pdf_obj anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, float w, float h)
+{
+	// add image to page resources.
+	char id[10];
+	snprintf(id, 10, "Im%d", pdf->page.images_count);
+	memcpy(img.id, id, sizeof(img.id));
+	pdf->page.images[pdf->page.images_count++] = img;
+
+	float scale_horizontal = img.width / img.height;
+
+	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y, w, h));
+
+	uint64_t write_start = anr__pdf_append_str(pdf, "q");
+	anr__pdf_append_printf(pdf, "\n%f 0 0 %f %f %f cm", w, h, x, y); // Translate & scale
+	anr__pdf_append_printf(pdf, "\n/%s Do", id);
+	anr__pdf_append_str(pdf, "\nQ");
+
+	uint64_t write_end = anr__pdf_end_content_obj(pdf);
+	uint64_t stream_length = write_end - write_start;
+
+	// Object containing stream length.
+	anr__pdf_begin_obj(pdf);
+	anr__pdf_append_printf(pdf, "\n%d", stream_length);
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	return obj_ref;
 }
 
 #ifdef __cplusplus
