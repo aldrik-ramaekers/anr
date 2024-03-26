@@ -29,18 +29,18 @@
 //	Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm)
 //
 //	IMPLEMENTED
-//		Text (fonts/sizes/colors/spacing)
+//		Text (fonts/sizes/colors/spacing/rotation)
 //		Bookmarks
 //		Primitives (lines/polygons/cubic beziers)
 //		Page & Document properties
 //		Annotations (text/link/markup) + annotation threads
 //		Encoding (ASCIIHex)
+//		Images
 //
 //	UNIMPLEMENTED
 //		Annotations (watermark)
 //		Text rotation
 //		Tables (using primitives)
-//		Images
 //		Password encryption (See chapter 7.6.1)
 //		Vertical text
 //		UTF8 text/fonts
@@ -57,6 +57,9 @@
 #include <stdarg.h>
 #include <inttypes.h>
 
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "examples/stb_truetype.h"
+
 #ifndef ANRPDF_ASSERT
 #include <assert.h>
 #define ANRPDF_ASSERT(x) assert(x)
@@ -69,6 +72,12 @@
 #ifndef ANR_PDF_MAX_PAGES
 #define ANR_PDF_MAX_PAGES 200
 #endif
+
+
+#ifndef ANR_PDF_MAX_CUSTOM_FONTS
+#define ANR_PDF_MAX_CUSTOM_FONTS 5
+#endif
+
 
 #ifndef ANR_PDF_MAX_BOOKMARKS
 #define ANR_PDF_MAX_BOOKMARKS 200
@@ -218,6 +227,7 @@ typedef struct
 	int render_mode; // default 0 (see table 106)
 	float rise; // default 0, can be negative
 	anr_pdf_color color; // default black
+	float angle; // default 0
 } anr_pdf_txt_conf;
 
 typedef enum
@@ -254,7 +264,7 @@ typedef struct
 	anr_pdf_color color; // default black
 	// @Unimplemented: automatic stroke adjustment, op SA, see table 58
 	// @Unimplemented: option to fill path with color
-} anr_pdf_gfx;
+} anr_pdf_gfx_conf;
 
 // Parameters for annotations. all optional.
 typedef struct
@@ -266,7 +276,7 @@ typedef struct
 } anr_pdf_annot_cnf;
 
 #define ANR_PDF_TXT_CONF_DEFAULT anr_pdf_txt_conf_default()
-#define ANR_PDF_GFX_CONF_DEFAULT anr_pdf_gfx_conf_default()
+#define ANR_PDF_GFX_CONF_DEFAULT anr_pdf_gfx_conf_conf_default()
 #define ANR_PDF_ANNOT_CONF_DEFAULT anr_pdf_annot_conf_default()
 
 typedef enum
@@ -326,7 +336,8 @@ typedef struct
 	anr_pdf_ref default_font_italic_ref;
 	anr_pdf_ref default_font_bold_ref;
 	anr_pdf_ref default_font_italic_bold_ref;
-
+	anr_pdf_ref custom_fonts[ANR_PDF_MAX_CUSTOM_FONTS];
+	uint32_t custom_fonts_count;
 } anr_pdf;
 
 
@@ -358,16 +369,17 @@ ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page s
 
 // === OBJECT OPERATIONS ===
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx gfx);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx_conf gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, float w, float h);
 
 // Image data is assumed to be in rgb color space. 3 samples per pixel.
-ANRPDFDEF anr_pdf_img 	anr_pdf_embed_image_data(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample);
+ANRPDFDEF anr_pdf_img 	anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample);
 
 // === DEFAULT CONFIGS === 
 ANRPDFDEF anr_pdf_txt_conf		anr_pdf_txt_conf_default();
-ANRPDFDEF anr_pdf_gfx			anr_pdf_gfx_conf_default();
+ANRPDFDEF anr_pdf_gfx_conf			anr_pdf_gfx_conf_conf_default();
 ANRPDFDEF anr_pdf_annot_cnf		anr_pdf_annot_conf_default();
 
 ////   end header file   /////////////////////////////////////////////////////
@@ -774,6 +786,8 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_italic_ref.id, pdf->default_font_italic_ref.id);
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_bold_ref.id, pdf->default_font_bold_ref.id);
 	anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->default_font_italic_bold_ref.id, pdf->default_font_italic_bold_ref.id);
+	for (uint32_t i = 0; i < pdf->custom_fonts_count; i++)
+		anr__pdf_append_printf(pdf, "\n/F%d %d 0 R", pdf->custom_fonts[i].id, pdf->custom_fonts[i].id);
 	anr__pdf_append_str(pdf, "\n>>");
 
 	// Add all images to xobject array.
@@ -808,12 +822,12 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 
 anr_pdf_txt_conf anr_pdf_txt_conf_default()
 {
-	return (anr_pdf_txt_conf){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),0, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}};
+	return (anr_pdf_txt_conf){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),0, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}, 0.0f};
 }
 
-anr_pdf_gfx anr_pdf_gfx_conf_default()
+anr_pdf_gfx_conf anr_pdf_gfx_conf_conf_default()
 {
-	return (anr_pdf_gfx){.line_cap = ANR_PDF_LINECAP_BUTT, .line_width = 0, .line_join = ANR_PDF_LINEJOIN_MITER, 
+	return (anr_pdf_gfx_conf){.line_cap = ANR_PDF_LINECAP_BUTT, .line_width = 0, .line_join = ANR_PDF_LINEJOIN_MITER, 
 		.miter_limit = 10, .dash_pattern = {0}, .color = ANR_PDF_RGB(0.0f,0.0f,0.0f)};
 }
 
@@ -822,7 +836,7 @@ anr_pdf_annot_cnf anr_pdf_annot_conf_default()
 	return (anr_pdf_annot_cnf){.color=ANR_PDF_RGB(1.0f, 1.0f, 0.0f), .parent = {.ref.id = 0}, .post_date = NULL, .posted_by = NULL};
 }
 
-anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
+anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx) 
 {
 	ANRPDF_ASSERT(data_length >= 3);
 	ANRPDF_ASSERT((data_length - 3) % 2 == 0);
@@ -879,13 +893,13 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	return obj_ref;
 }
 
-anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx gfx)
+anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx_conf gfx)
 {
 	anr_pdf_vecf data[2] = {p1, p2};
 	return anr_pdf_add_polygon(pdf, data, 2, gfx);
 }
 
-anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx gfx) 
+anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx) 
 {
 	ANRPDF_ASSERT(data_length > 0);
 	ANRPDF_ASSERT(gfx.miter_limit > 0);
@@ -957,7 +971,7 @@ anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, a
 	anr__pdf_append_printf(pdf, "\n%.2f TL", info.leading);
 	anr__pdf_append_printf(pdf, "\n%.2f Ts", info.rise);
 	anr__pdf_append_printf(pdf, "\n%d Tr", info.render_mode);
-	anr__pdf_append_printf(pdf, "\n%.3f %.3f Td", x, y);
+	anr__pdf_append_printf(pdf, "\n%f %f %f %f %f %f Tm", cosf(info.angle), sinf(info.angle), -sinf(info.angle), cosf(info.angle), x, y);
 	
 	anr__pdf_append_str(pdf, "\nT* (");
 	anr__pdf_append_str(pdf, text);
@@ -1159,7 +1173,7 @@ anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, 
 	return bookmark;
 }
 
-anr_pdf_img anr_pdf_embed_image_data(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample)
+anr_pdf_img anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample)
 {
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
 	
@@ -1207,6 +1221,68 @@ anr_pdf_obj anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, f
 	anr__pdf_append_str(pdf, "\nendobj");
 
 	return obj_ref;
+}
+
+anr_pdf_ref anr_pdf_embed_font(anr_pdf* pdf, unsigned char* data, uint32_t length)
+{
+	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_CUSTOM_FONTS);
+
+	anr_pdf_ref ttf_ref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_printf(pdf, "\n<</Length %d>>", length);
+	anr__pdf_append_str(pdf, "\nstream\n");
+	anr__pdf_append_bytes(pdf, (char*)data, length);
+	anr__pdf_append_str(pdf, "\nendstream");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	// NOTE: widths are inside ttf file but also need to be defined here and NEED to be identical. lol. see 9.2.4
+	anr_pdf_ref widths_ref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n[ ");
+	{
+		stbtt_fontinfo info;
+		stbtt_InitFont(&info, data, stbtt_GetFontOffsetForIndex(data,0));
+		for (uint32_t i = 0; i < 256; i++)
+		{
+			int advance;
+			int lsb;
+			stbtt_GetCodepointHMetrics(&info, i, &advance, &lsb);
+			anr__pdf_append_printf(pdf, "%d ", advance);
+		}
+	}
+	anr__pdf_append_str(pdf, "]\nendobj");
+
+	anr_pdf_ref descriptor_ref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<</Type /FontDescriptor");
+	anr__pdf_append_str_idref(pdf, "\n/FontName /F%d", descriptor_ref);
+	anr__pdf_append_printf(pdf, "\n/Flags %d", (1 << 5) | (1 << 16)); // nonsymbolic
+	anr__pdf_append_str(pdf, "\n/FontBBox [0 0 80 80]"); 
+	//anr__pdf_append_str(pdf, "\n/FontMatrix [0.001 0 0 0.001 0 0]"); // See table 112, map from glyph space to text space. 
+	anr__pdf_append_str(pdf, "\n/MissingWidth 350"); 
+	anr__pdf_append_str(pdf, "\n/ItalicAngle 5");
+	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
+	anr__pdf_append_str(pdf, "\n/Ascent 20");
+	anr__pdf_append_str(pdf, "\n/Descent 20");
+	anr__pdf_append_str(pdf, "\n/Leading 0");
+	anr__pdf_append_str(pdf, "\n/CapHeight 20");
+	anr__pdf_append_str(pdf, "\n/StemV 50");
+	anr__pdf_append_str_idref(pdf, "\n/FontFile2 %d 0 R", ttf_ref);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<</Type /Font");
+	anr__pdf_append_str(pdf, "\n/Subtype /TrueType");
+	anr__pdf_append_str_idref(pdf, "\n/Name /F%d", ref);
+	anr__pdf_append_str_idref(pdf, "\n/BaseFont /F%d", descriptor_ref);
+	anr__pdf_append_str(pdf, "\n/FirstChar 0");
+	anr__pdf_append_str(pdf, "\n/LastChar 255");
+	//anr__pdf_append_str(pdf, "\n/Encoding /WinAsciEncoding");
+	anr__pdf_append_str_idref(pdf, "\n/FontDescriptor %d 0 R", descriptor_ref);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	pdf->custom_fonts[pdf->custom_fonts_count++] = ref;
+
+	return ref;
 }
 
 #ifdef __cplusplus

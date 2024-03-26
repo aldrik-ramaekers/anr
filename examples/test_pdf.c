@@ -9,12 +9,14 @@
 #include <math.h>
 
 anr_pdf_obj bold_text_link;
+anr_pdf_ref comic_sans;
 
 static anr_pdf_page create_page_1(anr_pdf* pdf)
 {
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
 
 	anr_pdf_txt_conf info = anr_pdf_txt_conf_default(pdf);
+	info.font = comic_sans;
 
 	#define NEXT_LINE size.y -= 15;
 	anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
@@ -62,7 +64,9 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 	info.render_mode = 0;
 
 	info.font_size = 24;
-	NEXT_LINE;NEXT_LINE; anr_pdf_add_text(pdf, "This text is pretty big..", 10, size.y, info);
+	info.angle = M_PI/-4.0f;
+	NEXT_LINE;NEXT_LINE; anr_pdf_add_text(pdf, "This text is pretty big..", 300, size.y, info);
+	info.angle = 0.0f;
 	info.font_size = 12;
 	
 	info.font = pdf->default_font_bold_ref;
@@ -99,7 +103,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
 	
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
+			anr_pdf_gfx_conf gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.line_join = ANR_PDF_LINEJOIN_MITER;
@@ -120,7 +124,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
+			anr_pdf_gfx_conf gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.color = ANR_PDF_RGB(0.0f, 0.3f, 0.5f);
@@ -139,7 +143,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
+			anr_pdf_gfx_conf gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 4;
 			gfx.color = ANR_PDF_RGB(0.0f, 1.0f, 0.0f);
@@ -153,7 +157,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 		}
 
 		{
-			anr_pdf_gfx gfx = ANR_PDF_GFX_CONF_DEFAULT;
+			anr_pdf_gfx_conf gfx = ANR_PDF_GFX_CONF_DEFAULT;
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 10;
 			gfx.color = ANR_PDF_RGB(1.0f, 1.0f, 0.0f);
@@ -167,7 +171,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 			unsigned char *data = stbi_load("greenland_grid_velo.bmp", &w, &h, &bbs, 3);	
 			printf("Bmp greenland: %d %d %d\n", w, h, bbs);
 
-			anr_pdf_img img = anr_pdf_embed_image_data(pdf, data, w*h*bbs, w, h, 8);
+			anr_pdf_img img = anr_pdf_embed_image(pdf, data, w*h*bbs, w, h, 8);
 			anr_pdf_add_image(pdf, img, 0, 200, size.x/4, size.y/4);
 		}
 
@@ -176,7 +180,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 			unsigned char *data = stbi_load("spongebob.png", &w, &h, &bbs,3);
 			printf("Bmp greenland: %d %d %d\n", w, h, bbs);
 
-			anr_pdf_img img = anr_pdf_embed_image_data(pdf, data, w*h*3, w, h, 8);
+			anr_pdf_img img = anr_pdf_embed_image(pdf, data, w*h*3, w, h, 8);
 			anr_pdf_add_image(pdf, img, 400, 200, size.x/4, size.y/4);
 		}
 	}
@@ -213,6 +217,15 @@ int main()
 	anr_pdf_document_add_information_dictionary(pdf, 
 		"Simple text document", "Aldrik", "Cool Banana's", 
 		"Text, Bananas", NULL, "anr_pdf Library", "20240318201500-00'00", NULL);
+
+	FILE* file = fopen("comic-sans.ttf", "rw");
+	fseek(file, 0, SEEK_END);
+	size_t ttf_size = ftell(file);
+	printf("Comic sans: %d\n", (int)ttf_size);
+	rewind(file);
+	unsigned char* ttf_buffer = malloc(ttf_size);
+	fread(ttf_buffer, 1, ttf_size, file);
+	comic_sans = anr_pdf_embed_font(pdf, ttf_buffer, ttf_size);
 
 	anr_pdf_page page1 = create_page_1(pdf);
 	anr_pdf_page page2 = create_page_2(pdf);
