@@ -20,7 +20,7 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 
 	#define NEXT_LINE size.y -= 15;
 	anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
-	NEXT_LINE; anr_pdf_add_text(pdf, "Hello World!", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Hello world!", 10, size.y, info);
 
 	info.color = ANR_PDF_RGB(1.0, 0.5, 0.0);
 	NEXT_LINE; anr_pdf_add_text(pdf, "Text with color", 10, size.y, info);

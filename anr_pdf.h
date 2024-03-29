@@ -951,6 +951,58 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 	return obj_ref;
 }
 
+static int utf8_to_utf32(const char *utf8, int len, uint32_t *utf32)
+{
+    uint32_t ch;
+    uint8_t mask;
+
+    if (len <= 0 || !utf8 || !utf32)
+        return 0;
+
+    ch = *(uint8_t *)utf8;
+    if ((ch & 0x80) == 0) {
+        len = 1;
+        mask = 0x7f;
+    } else if ((ch & 0xe0) == 0xc0 && len >= 2) {
+        len = 2;
+        mask = 0x1f;
+    } else if ((ch & 0xf0) == 0xe0 && len >= 3) {
+        len = 3;
+        mask = 0xf;
+    } else if ((ch & 0xf8) == 0xf0 && len >= 4) {
+        len = 4;
+        mask = 0x7;
+    } else
+        return 0;
+
+    ch = 0;
+    for (int i = 0; i < len; i++) {
+        int shift = (len - i - 1) * 6;
+        if (!*utf8)
+            return 0;
+        if (i == 0)
+            ch |= ((uint32_t)(*utf8++) & mask) << shift;
+        else
+            ch |= ((uint32_t)(*utf8++) & 0x3f) << shift;
+    }
+
+    *utf32 = ch;
+
+    return len;
+}
+
+static void anr__pdf_append_str_as_utf16(anr_pdf* pdf, const char* text)
+{
+	uint32_t buffer[100];
+	int total_length = strlen(text);
+	while (*text != 0) {
+		int len = utf8_to_utf32(text, total_length, buffer);
+		anr__pdf_append_bytes(pdf, (const char*)buffer, len);
+		total_length -= len;
+		text += len;
+	}
+}
+
 anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info) 
 {
 	uint64_t str_len = strlen(text); // we need to calculate string width somehow
@@ -974,8 +1026,9 @@ anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, a
 	anr__pdf_append_printf(pdf, "\n%f %f %f %f %f %f Tm", cosf(info.angle), sinf(info.angle), -sinf(info.angle), cosf(info.angle), x, y);
 	
 	anr__pdf_append_str(pdf, "\nT* (");
-	anr__pdf_append_str(pdf, text);
-	anr__pdf_append_str(pdf, "\n) Tj");
+	//anr__pdf_append_printf(pdf, "(%s)", text);
+	anr__pdf_append_str_as_utf16(pdf, text);
+	anr__pdf_append_str(pdf, ") Tj");
 	anr__pdf_append_str(pdf, "\nET");
 
 	uint64_t write_end = anr__pdf_end_content_obj(pdf);
@@ -1234,36 +1287,102 @@ anr_pdf_ref anr_pdf_embed_font(anr_pdf* pdf, unsigned char* data, uint32_t lengt
 	anr__pdf_append_str(pdf, "\nendstream");
 	anr__pdf_append_str(pdf, "\nendobj");
 
-	// NOTE: widths are inside ttf file but also need to be defined here and NEED to be identical. lol. see 9.2.4
 	anr_pdf_ref widths_ref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n[ ");
 	{
 		stbtt_fontinfo info;
 		stbtt_InitFont(&info, data, stbtt_GetFontOffsetForIndex(data,0));
-		for (uint32_t i = 0; i < 256; i++)
+		for (uint32_t i = 0; i < 0xFFFF; i++)
 		{
 			int advance;
 			int lsb;
 			stbtt_GetCodepointHMetrics(&info, i, &advance, &lsb);
-			anr__pdf_append_printf(pdf, "%d ", advance);
+			anr__pdf_append_printf(pdf, "%d ", (int)(advance/2));
 		}
 	}
 	anr__pdf_append_str(pdf, "]\nendobj");
 
+#if 0
 	anr_pdf_ref descriptor_ref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n<</Type /FontDescriptor");
 	anr__pdf_append_str_idref(pdf, "\n/FontName /F%d", descriptor_ref);
-	anr__pdf_append_printf(pdf, "\n/Flags %d", (1 << 5) | (1 << 16)); // nonsymbolic
-	anr__pdf_append_str(pdf, "\n/FontBBox [0 0 80 80]"); 
+	anr__pdf_append_printf(pdf, "\n/Flags %d", 4); // nonsymbolic
+	anr__pdf_append_str(pdf, "\n/FontBBox [-92.773438 -312.01172 1186.52344 1102.05078]"); 
 	//anr__pdf_append_str(pdf, "\n/FontMatrix [0.001 0 0 0.001 0 0]"); // See table 112, map from glyph space to text space. 
 	anr__pdf_append_str(pdf, "\n/MissingWidth 350"); 
-	anr__pdf_append_str(pdf, "\n/ItalicAngle 5");
+	//anr__pdf_append_str(pdf, "\n/Leading 0");
+	anr__pdf_append_str(pdf, "\n/ItalicAngle 0");
+	anr__pdf_append_str(pdf, "\n/Ascent 1102.05078");
+	anr__pdf_append_str(pdf, "\n/Descent -291.50391");
+	anr__pdf_append_str(pdf, "\n/CapHeight 389.16016");
 	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
-	anr__pdf_append_str(pdf, "\n/Ascent 20");
-	anr__pdf_append_str(pdf, "\n/Descent 20");
-	anr__pdf_append_str(pdf, "\n/Leading 0");
-	anr__pdf_append_str(pdf, "\n/CapHeight 20");
-	anr__pdf_append_str(pdf, "\n/StemV 50");
+	anr__pdf_append_str(pdf, "\n/StemV 61.035156");
+	anr__pdf_append_str_idref(pdf, "\n/FontFile2 %d 0 R", ttf_ref);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	anr_pdf_ref descendentref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<</Type /Font");
+	anr__pdf_append_str(pdf, "\n/Subtype /CIDFontType2");
+	anr__pdf_append_str_idref(pdf, "\n/BaseFont /F%d", descriptor_ref);
+	anr__pdf_append_str(pdf, "\n/CIDToGIDMap /Identity");
+	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
+	anr__pdf_append_str(pdf, "\n/CIDSystemInfo <</Registry (Adobe)\n/Ordering (Identity)\n/Supplement 0>>");
+
+	anr__pdf_append_str(pdf, "\n/W[ -29 [");
+	{
+		stbtt_fontinfo info;
+		stbtt_InitFont(&info, data, stbtt_GetFontOffsetForIndex(data,0));
+		for (uint32_t i = 0; i < 0xFFFF; i++)
+		{
+			int advance;
+			int lsb;
+			stbtt_GetCodepointHMetrics(&info, i, &advance, &lsb);
+			anr__pdf_append_printf(pdf, "%d ", (int)(advance/2));
+			//printf("%c %d\n", (char)i, advance);
+		}
+	}
+	anr__pdf_append_str(pdf, "]]");
+
+	//anr__pdf_append_str(pdf, "\n/DW 500");
+	anr__pdf_append_str_idref(pdf, "\n/FontDescriptor %d 0 R", descriptor_ref);
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	anr_pdf_ref registryref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<</Length 386>>\nstream\n");
+	anr__pdf_append_str(pdf, "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+	"/CIDSystemInfo\n<<  /Registry (Adobe)\n/Ordering (Identity)\n/Supplement 0\n>> def\n/CMapName /Adobe-Identity-UCS def"
+	"\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n4 "
+	"beginbfchar"
+	"\n<0044> <0061>\n<004B> <0068>\n<004F> <006C>\n<0052> <006F>"
+	"\nendbfchar"
+	"\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend");
+	anr__pdf_append_str(pdf, "\nendstream\nendobj");
+
+	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<</Type /Font");
+	anr__pdf_append_str(pdf, "\n/Subtype /Type0");
+	anr__pdf_append_str_idref(pdf, "\n/BaseFont /F%d", descriptor_ref);
+	anr__pdf_append_str(pdf, "\n/Encoding /Identity-H");
+	anr__pdf_append_str_idref(pdf, "\n/DescendantFonts [%d 0 R]", descendentref);
+	anr__pdf_append_str_idref(pdf, "\n/ToUnicode %d 0 R", registryref);
+	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
+	anr__pdf_append_str(pdf, ">>");
+	anr__pdf_append_str(pdf, "\nendobj");
+#else
+
+	anr_pdf_ref descriptor_ref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<</Type /FontDescriptor");
+	anr__pdf_append_str_idref(pdf, "\n/FontName /F%d", descriptor_ref);
+	anr__pdf_append_printf(pdf, "\n/Flags %d", 1 << 5); // nonsymbolic
+	anr__pdf_append_str(pdf, "\n/FontBBox [-92.773438 -312.01172 1186.52344 1102.05078]"); 
+	anr__pdf_append_str(pdf, "\n/MissingWidth 350"); 
+	anr__pdf_append_str(pdf, "\n/ItalicAngle 0");
+	anr__pdf_append_str(pdf, "\n/Ascent 1102.05078");
+	anr__pdf_append_str(pdf, "\n/Descent -291.50391");
+	anr__pdf_append_str(pdf, "\n/CapHeight 389.16016");
+	anr__pdf_append_str(pdf, "\n/StemV 61.035156");
 	anr__pdf_append_str_idref(pdf, "\n/FontFile2 %d 0 R", ttf_ref);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
@@ -1275,10 +1394,12 @@ anr_pdf_ref anr_pdf_embed_font(anr_pdf* pdf, unsigned char* data, uint32_t lengt
 	anr__pdf_append_str_idref(pdf, "\n/BaseFont /F%d", descriptor_ref);
 	anr__pdf_append_str(pdf, "\n/FirstChar 0");
 	anr__pdf_append_str(pdf, "\n/LastChar 255");
-	//anr__pdf_append_str(pdf, "\n/Encoding /WinAsciEncoding");
+	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref);
+	anr__pdf_append_str(pdf, "\n/Encoding /WinAsciEncoding");
 	anr__pdf_append_str_idref(pdf, "\n/FontDescriptor %d 0 R", descriptor_ref);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
+#endif
 
 	pdf->custom_fonts[pdf->custom_fonts_count++] = ref;
 
