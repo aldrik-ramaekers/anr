@@ -23,38 +23,31 @@
 //	This library follows the pdf 1.7 ISO 32000-1 standard
 //	https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf
 //
+//
 //	Coordinates & size are denoted in user space units. (inch / 72).
 //	When positioning objects, xy (0, 0) is on the bottomleft of the page.
 //
 //	Dates follow ASN.1 format. see chapter 7.9.4. (YYYYMMDDHHmmSSOHH'mm)
 //
+//	ASCII text only.
+//
 //	IMPLEMENTED
 //		Text (fonts/sizes/colors/spacing/rotation)
 //		Bookmarks
 //		Primitives (lines/polygons/cubic beziers)
-//		Page & Document properties
+//		Page & Document labeling
 //		Annotations (text/link/markup) + annotation threads
 //		Encoding (ASCIIHex)
-//		Images
+//		Images (rgb)
+//		TTF embedding
 //
 //	UNIMPLEMENTED
-//		Annotations (watermark)
-//		Text rotation
 //		Tables (using primitives)
 //		Password encryption (See chapter 7.6.1)
-//		Vertical text
-//		UTF8 text/fonts
 //		Links
-//		Page labels (See chapter 12.4.2)
 //		Thumbnail images (See chapter 12.3.4)
 //		Form fields (textbox, checkbox)
-//		Watermark
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <string.h>
-#include <stdarg.h>
 #include <inttypes.h>
 
 #define STB_TRUETYPE_IMPLEMENTATION
@@ -200,6 +193,13 @@ typedef struct
 	uint32_t depth;
 } anr_pdf_bookmark;
 
+typedef enum
+{
+	ANR_PDF_ALIGN_LEFT,
+	ANR_PDF_ALIGN_CENTER,
+	ANR_PDF_ALIGN_RIGHT,
+} anr_pdf_align;
+
 // Size = inches * 72
 anr_pdf_vecf __anr_pdf_page_sizes[ANR_PDF_PAGE_COUNT] = 
 {
@@ -214,6 +214,13 @@ anr_pdf_vecf __anr_pdf_page_sizes[ANR_PDF_PAGE_COUNT] =
 	{.x = ANR_INCH_TO_USU(4.1), 	.y = ANR_INCH_TO_USU(5.8)}, // A6
 };
 
+typedef enum
+{
+	ANR_PDF_TEXT_RENDERING_FILL = 0,
+	ANR_PDF_TEXT_RENDERING_STROKE = 1,
+	ANR_PDF_TEXT_RENDERING_STROKETHENFILL = 2,
+} anr_pdf_text_rendering_mode;
+
 // See Table 105, 74.
 // Parameters for text state and color.
 typedef struct
@@ -224,7 +231,7 @@ typedef struct
 	float leading; // default 0
 	uint16_t font_size; // default to 12
 	anr_pdf_ref font; // default to document font
-	int render_mode; // default 0 (see table 106)
+	anr_pdf_text_rendering_mode render_mode; // default 0 (see table 106)
 	float rise; // default 0, can be negative
 	anr_pdf_color color; // default black
 	float angle; // default 0
@@ -313,6 +320,7 @@ typedef struct
 		uint64_t objects_count;
 		anr_pdf_img images[ANR_PDF_MAX_OBJECTS_PER_PAGE];
 		uint32_t images_count;
+		anr_pdf_img thumbnail;
 	} page;
 
 	// list of pages
@@ -339,8 +347,6 @@ typedef struct
 	anr_pdf_ref custom_fonts[ANR_PDF_MAX_CUSTOM_FONTS];
 	uint32_t custom_fonts_count;
 } anr_pdf;
-
-
 
 
 // === DOCUMENT OPERATIONS === 
@@ -373,13 +379,16 @@ ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_v
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
 ANRPDFDEF anr_pdf_obj 	anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, float w, float h);
+ANRPDFDEF anr_pdf_obj 	anr_pdf_add_page_label(anr_pdf* pdf, const char* text, anr_pdf_align align);
 
-// Image data is assumed to be in rgb color space. 3 samples per pixel.
+// === FILE EMBEDDING ===
+	// Image data is assumed to be in rgb color space. 3 bytes per pixel.
 ANRPDFDEF anr_pdf_img 	anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample);
+ANRPDFDEF anr_pdf_ref 	anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length);
 
 // === DEFAULT CONFIGS === 
 ANRPDFDEF anr_pdf_txt_conf		anr_pdf_txt_conf_default();
-ANRPDFDEF anr_pdf_gfx_conf			anr_pdf_gfx_conf_conf_default();
+ANRPDFDEF anr_pdf_gfx_conf		anr_pdf_gfx_conf_conf_default();
 ANRPDFDEF anr_pdf_annot_cnf		anr_pdf_annot_conf_default();
 
 ////   end header file   /////////////////////////////////////////////////////
@@ -521,7 +530,7 @@ static anr_pdf_ref anr__pdf_begin_obj(anr_pdf* pdf)
 	return (anr_pdf_ref){.id = id, .offset_in_body = pdf->body_write_cursor};
 }
 
-static uint64_t anr__pdf_end_content_obj(anr_pdf* pdf)
+static uint64_t anr__pdf_end_content_obj(anr_pdf* pdf, uint64_t write_start)
 {
 	pdf->writing_to_stream = 0;
 
@@ -533,6 +542,13 @@ static uint64_t anr__pdf_end_content_obj(anr_pdf* pdf)
 	}
 
 	uint64_t write_end = anr__pdf_append_str(pdf, "\nendstream");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+	uint64_t stream_length = write_end - write_start;
+
+	// Object containing stream length.
+	anr__pdf_begin_obj(pdf);
+	anr__pdf_append_printf(pdf, "\n%d", stream_length);
 	anr__pdf_append_str(pdf, "\nendobj");
 	return write_end;
 }
@@ -665,6 +681,8 @@ static void anr__pdf_append_document_catalog(anr_pdf* pdf)
 	anr__pdf_append_str_idref(pdf, "\n/Outlines %d 0 R", outlineref);
 	// @Unimplemented: pagemode (see Table 28)
 	anr__pdf_append_str_idref(pdf, "\n/Pages %d 0 R", treeref);
+	anr__pdf_append_str(pdf, "\n/PageMode /UseThumbs");
+	anr__pdf_append_str(pdf, "\n/PageLabels << /Nums [ 0 << /S /D >> ] >>"); // arabic numerals for page numbering.
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
 
@@ -764,7 +782,13 @@ void anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size)
 	pdf->page.objects_count = 0;
 	pdf->page.images_count = 0;
 	pdf->page.size = size;
+	pdf->page.thumbnail.ref = anr__pdf_emptyref();
 	// @Unimplemented: page rotation
+}
+
+void anr_pdf_page_set_thumbnail(anr_pdf* pdf, anr_pdf_img img)
+{
+	pdf->page.thumbnail = img;
 }
 
 anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
@@ -779,6 +803,11 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	anr__pdf_append_str(pdf, "\n<</Type /Page");
 	uint64_t offset = anr__pdf_append_str(pdf, "\n/Parent "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is apended..
 	anr__pdf_append_str_idref(pdf, "\n/Resources <</ProcSet %d 0 R", procsetref);
+
+	// Set thumbnail image
+	if (anr__pdf_ref_valid(pdf->page.thumbnail.ref)) {
+		anr__pdf_append_str_idref(pdf, "\n/Thumb %d 0 R", pdf->page.thumbnail.ref);
+	}
 
 	// Import all default fonts in page.
 	anr__pdf_append_str(pdf, "\n/Font <<");
@@ -822,7 +851,7 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 
 anr_pdf_txt_conf anr_pdf_txt_conf_default()
 {
-	return (anr_pdf_txt_conf){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),0, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}, 0.0f};
+	return (anr_pdf_txt_conf){0.0f,0.0f,100.0f,0.0f,12,anr__pdf_emptyref(),ANR_PDF_TEXT_RENDERING_FILL, 0.0f, (anr_pdf_color){0.0f,0.0f,0.0f}, 0.0f};
 }
 
 anr_pdf_gfx_conf anr_pdf_gfx_conf_conf_default()
@@ -881,15 +910,7 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	anr__pdf_append_printf(pdf, "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
-	uint64_t write_end = anr__pdf_end_content_obj(pdf);
-
-	stream_length = write_end - write_start;
-
-	// Object containing stream length.
-	anr__pdf_begin_obj(pdf);
-	anr__pdf_append_printf(pdf, "\n%d", stream_length);
-	anr__pdf_append_str(pdf, "\nendobj");
-
+	anr__pdf_end_content_obj(pdf, write_start);
 	return obj_ref;
 }
 
@@ -939,68 +960,25 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 	anr__pdf_append_printf(pdf, "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
-	uint64_t write_end = anr__pdf_end_content_obj(pdf);
-
-	stream_length = write_end - write_start;
-
-	// Object containing stream length.
-	anr__pdf_begin_obj(pdf);
-	anr__pdf_append_printf(pdf, "\n%d", stream_length);
-	anr__pdf_append_str(pdf, "\nendobj");
-
+	anr__pdf_end_content_obj(pdf, write_start);
 	return obj_ref;
 }
 
-static int utf8_to_utf32(const char *utf8, int len, uint32_t *utf32)
-{
-    uint32_t ch;
-    uint8_t mask;
+anr_pdf_obj anr_pdf_add_page_label(anr_pdf* pdf, const char* text, anr_pdf_align align)
+{	
+	anr_pdf_vecf page_size = anr_pdf_page_get_size(pdf->page.size);
+	float x = ANR_INCH_TO_USU(0.8), y = ANR_INCH_TO_USU(0.5);
 
-    if (len <= 0 || !utf8 || !utf32)
-        return 0;
-
-    ch = *(uint8_t *)utf8;
-    if ((ch & 0x80) == 0) {
-        len = 1;
-        mask = 0x7f;
-    } else if ((ch & 0xe0) == 0xc0 && len >= 2) {
-        len = 2;
-        mask = 0x1f;
-    } else if ((ch & 0xf0) == 0xe0 && len >= 3) {
-        len = 3;
-        mask = 0xf;
-    } else if ((ch & 0xf8) == 0xf0 && len >= 4) {
-        len = 4;
-        mask = 0x7;
-    } else
-        return 0;
-
-    ch = 0;
-    for (int i = 0; i < len; i++) {
-        int shift = (len - i - 1) * 6;
-        if (!*utf8)
-            return 0;
-        if (i == 0)
-            ch |= ((uint32_t)(*utf8++) & mask) << shift;
-        else
-            ch |= ((uint32_t)(*utf8++) & 0x3f) << shift;
-    }
-
-    *utf32 = ch;
-
-    return len;
-}
-
-static void anr__pdf_append_str_as_utf16(anr_pdf* pdf, const char* text)
-{
-	uint32_t buffer[100];
-	int total_length = strlen(text);
-	while (*text != 0) {
-		int len = utf8_to_utf32(text, total_length, buffer);
-		anr__pdf_append_bytes(pdf, (const char*)buffer, len);
-		total_length -= len;
-		text += len;
+	switch (align)
+	{
+	case ANR_PDF_ALIGN_LEFT: break;
+	case ANR_PDF_ALIGN_CENTER: x = page_size.x/2;
+		break;
+	case ANR_PDF_ALIGN_RIGHT: x = page_size.x - ANR_INCH_TO_USU(0.8);
+		break;
 	}
+	
+	return anr_pdf_add_text(pdf, text, x, y, ANR_PDF_TXT_CONF_DEFAULT);
 }
 
 anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info) 
@@ -1024,21 +1002,10 @@ anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, a
 	anr__pdf_append_printf(pdf, "\n%.2f Ts", info.rise);
 	anr__pdf_append_printf(pdf, "\n%d Tr", info.render_mode);
 	anr__pdf_append_printf(pdf, "\n%f %f %f %f %f %f Tm", cosf(info.angle), sinf(info.angle), -sinf(info.angle), cosf(info.angle), x, y);
-	
-	anr__pdf_append_str(pdf, "\nT* (");
-	//anr__pdf_append_printf(pdf, "(%s)", text);
-	anr__pdf_append_str_as_utf16(pdf, text);
-	anr__pdf_append_str(pdf, ") Tj");
+	anr__pdf_append_printf(pdf, "\nT* (%s) Tj", text);
 	anr__pdf_append_str(pdf, "\nET");
 
-	uint64_t write_end = anr__pdf_end_content_obj(pdf);
-	stream_length = write_end - write_start;
-
-	// Object containing stream length.
-	anr__pdf_begin_obj(pdf);
-	anr__pdf_append_printf(pdf, "\n%d", stream_length);
-	anr__pdf_append_str(pdf, "\nendobj");
-
+	anr__pdf_end_content_obj(pdf, write_start);
 	return obj_ref;
 }
 
@@ -1228,6 +1195,8 @@ anr_pdf_bookmark anr_pdf_document_add_bookmark(anr_pdf* pdf, anr_pdf_page page, 
 
 anr_pdf_img anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample)
 {
+	ANRPDF_ASSERT(length == width*height*3);
+
 	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
 	
 	anr__pdf_append_str(pdf, "\n<</Type /XObject");
@@ -1236,7 +1205,6 @@ anr_pdf_img anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t leng
 	anr__pdf_append_printf(pdf, "\n/Height %d", height);
 	anr__pdf_append_str(pdf, "\n/ColorSpace /DeviceRGB");
 	anr__pdf_append_printf(pdf, "\n/BitsPerComponent %d", bits_per_sample);
-	anr__pdf_append_str(pdf, "\n/ComponentsPerSample 4");
 	anr__pdf_append_str(pdf, "\n/Interpolate true");
 	anr__pdf_append_printf(pdf, "\n/Length %d", length);
 	anr__pdf_append_str(pdf, ">>");
@@ -1265,18 +1233,11 @@ anr_pdf_obj anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, f
 	anr__pdf_append_printf(pdf, "\n/%s Do", id);
 	anr__pdf_append_str(pdf, "\nQ");
 
-	uint64_t write_end = anr__pdf_end_content_obj(pdf);
-	uint64_t stream_length = write_end - write_start;
-
-	// Object containing stream length.
-	anr__pdf_begin_obj(pdf);
-	anr__pdf_append_printf(pdf, "\n%d", stream_length);
-	anr__pdf_append_str(pdf, "\nendobj");
-
+	anr__pdf_end_content_obj(pdf, write_start);
 	return obj_ref;
 }
 
-anr_pdf_ref anr_pdf_embed_font(anr_pdf* pdf, unsigned char* data, uint32_t length)
+anr_pdf_ref anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length)
 {
 	ANRPDF_ASSERT(pdf->all_annotations_count < ANR_PDF_MAX_CUSTOM_FONTS);
 
@@ -1297,80 +1258,10 @@ anr_pdf_ref anr_pdf_embed_font(anr_pdf* pdf, unsigned char* data, uint32_t lengt
 			int advance;
 			int lsb;
 			stbtt_GetCodepointHMetrics(&info, i, &advance, &lsb);
-			anr__pdf_append_printf(pdf, "%d ", (int)(advance/2));
+			anr__pdf_append_printf(pdf, "%d ", (int)(advance));
 		}
 	}
 	anr__pdf_append_str(pdf, "]\nendobj");
-
-#if 0
-	anr_pdf_ref descriptor_ref = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<</Type /FontDescriptor");
-	anr__pdf_append_str_idref(pdf, "\n/FontName /F%d", descriptor_ref);
-	anr__pdf_append_printf(pdf, "\n/Flags %d", 4); // nonsymbolic
-	anr__pdf_append_str(pdf, "\n/FontBBox [-92.773438 -312.01172 1186.52344 1102.05078]"); 
-	//anr__pdf_append_str(pdf, "\n/FontMatrix [0.001 0 0 0.001 0 0]"); // See table 112, map from glyph space to text space. 
-	anr__pdf_append_str(pdf, "\n/MissingWidth 350"); 
-	//anr__pdf_append_str(pdf, "\n/Leading 0");
-	anr__pdf_append_str(pdf, "\n/ItalicAngle 0");
-	anr__pdf_append_str(pdf, "\n/Ascent 1102.05078");
-	anr__pdf_append_str(pdf, "\n/Descent -291.50391");
-	anr__pdf_append_str(pdf, "\n/CapHeight 389.16016");
-	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
-	anr__pdf_append_str(pdf, "\n/StemV 61.035156");
-	anr__pdf_append_str_idref(pdf, "\n/FontFile2 %d 0 R", ttf_ref);
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
-
-	anr_pdf_ref descendentref = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<</Type /Font");
-	anr__pdf_append_str(pdf, "\n/Subtype /CIDFontType2");
-	anr__pdf_append_str_idref(pdf, "\n/BaseFont /F%d", descriptor_ref);
-	anr__pdf_append_str(pdf, "\n/CIDToGIDMap /Identity");
-	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
-	anr__pdf_append_str(pdf, "\n/CIDSystemInfo <</Registry (Adobe)\n/Ordering (Identity)\n/Supplement 0>>");
-
-	anr__pdf_append_str(pdf, "\n/W[ -29 [");
-	{
-		stbtt_fontinfo info;
-		stbtt_InitFont(&info, data, stbtt_GetFontOffsetForIndex(data,0));
-		for (uint32_t i = 0; i < 0xFFFF; i++)
-		{
-			int advance;
-			int lsb;
-			stbtt_GetCodepointHMetrics(&info, i, &advance, &lsb);
-			anr__pdf_append_printf(pdf, "%d ", (int)(advance/2));
-			//printf("%c %d\n", (char)i, advance);
-		}
-	}
-	anr__pdf_append_str(pdf, "]]");
-
-	//anr__pdf_append_str(pdf, "\n/DW 500");
-	anr__pdf_append_str_idref(pdf, "\n/FontDescriptor %d 0 R", descriptor_ref);
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
-
-	anr_pdf_ref registryref = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<</Length 386>>\nstream\n");
-	anr__pdf_append_str(pdf, "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
-	"/CIDSystemInfo\n<<  /Registry (Adobe)\n/Ordering (Identity)\n/Supplement 0\n>> def\n/CMapName /Adobe-Identity-UCS def"
-	"\n/CMapType 2 def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n4 "
-	"beginbfchar"
-	"\n<0044> <0061>\n<004B> <0068>\n<004F> <006C>\n<0052> <006F>"
-	"\nendbfchar"
-	"\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend");
-	anr__pdf_append_str(pdf, "\nendstream\nendobj");
-
-	anr_pdf_ref ref = anr__pdf_begin_obj(pdf);
-	anr__pdf_append_str(pdf, "\n<</Type /Font");
-	anr__pdf_append_str(pdf, "\n/Subtype /Type0");
-	anr__pdf_append_str_idref(pdf, "\n/BaseFont /F%d", descriptor_ref);
-	anr__pdf_append_str(pdf, "\n/Encoding /Identity-H");
-	anr__pdf_append_str_idref(pdf, "\n/DescendantFonts [%d 0 R]", descendentref);
-	anr__pdf_append_str_idref(pdf, "\n/ToUnicode %d 0 R", registryref);
-	anr__pdf_append_str_idref(pdf, "\n/Widths %d 0 R", widths_ref); // This is somehow wrong :(
-	anr__pdf_append_str(pdf, ">>");
-	anr__pdf_append_str(pdf, "\nendobj");
-#else
 
 	anr_pdf_ref descriptor_ref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n<</Type /FontDescriptor");
@@ -1399,7 +1290,6 @@ anr_pdf_ref anr_pdf_embed_font(anr_pdf* pdf, unsigned char* data, uint32_t lengt
 	anr__pdf_append_str_idref(pdf, "\n/FontDescriptor %d 0 R", descriptor_ref);
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
-#endif
 
 	pdf->custom_fonts[pdf->custom_fonts_count++] = ref;
 

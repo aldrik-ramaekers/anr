@@ -17,33 +17,37 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 
 	anr_pdf_txt_conf info = anr_pdf_txt_conf_default(pdf);
 	info.font = comic_sans;
+	info.font_size = 20;
 
-	#define NEXT_LINE size.y -= 15;
 	anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
-	NEXT_LINE; anr_pdf_add_text(pdf, "Hello world!", 10, size.y, info);
+	float textx = ANR_INCH_TO_USU(0.75);
+	size.y -= ANR_INCH_TO_USU(0.75);
+
+	#define NEXT_LINE size.y -= 20;
+	NEXT_LINE; anr_pdf_add_text(pdf, "Hello world!", textx, size.y, info);
 
 	info.color = ANR_PDF_RGB(1.0, 0.5, 0.0);
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text with color", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text with color", textx, size.y, info);
 	info.color = ANR_PDF_RGB(0.0, 0.0, 0.0);
 
 	info.char_space = 4.0f;
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text with character spacing", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text with character spacing", textx, size.y, info);
 	info.char_space = 0.0f;
 
 	info.word_space = 10.0f;
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text with word spacing", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text with word spacing", textx, size.y, info);
 	info.word_space = 0.0f;
 
 	info.horizontal_scale = 150.0f;
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text with big horizontal scale", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text with big horizontal scale", textx, size.y, info);
 	info.horizontal_scale = 0.0f;
 
 	info.horizontal_scale = 50.0f;
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text with small horizontal scale", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text with small horizontal scale", textx, size.y, info);
 	info.horizontal_scale = 100.0f;
 
 	info.leading = 10.0f;
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text with leading", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text with leading", textx, size.y, info);
 	size.y -= 10;
 	NEXT_LINE; 
 	info.leading = 0.0f;
@@ -55,32 +59,33 @@ static anr_pdf_page create_page_1(anr_pdf* pdf)
 		str[0] = funky_text[i];
 		str[1] = 0;
 		info.rise = sin(i)*2.0f;
-		anr_pdf_add_text(pdf, str, 10 + i*8, size.y, info);
+		anr_pdf_add_text(pdf, str, textx + i*8, size.y, info);
 	}
 	info.rise = 0.0f;
 
-	info.render_mode = 1;
-	NEXT_LINE; anr_pdf_add_text(pdf, "Text rendered in outline mode", 10, size.y, info);
-	info.render_mode = 0;
+	info.render_mode = ANR_PDF_TEXT_RENDERING_STROKE;
+	NEXT_LINE; anr_pdf_add_text(pdf, "Text rendered in outline mode", textx, size.y, info);
+	info.render_mode = ANR_PDF_TEXT_RENDERING_FILL;
 
-	info.font_size = 24;
+	info.font_size = 36;
 	info.angle = M_PI/-4.0f;
 	NEXT_LINE;NEXT_LINE; anr_pdf_add_text(pdf, "This text is pretty big..", 300, size.y, info);
 	info.angle = 0.0f;
 	info.font_size = 12;
 	
 	info.font = pdf->default_font_bold_ref;
-	NEXT_LINE; anr_pdf_add_text(pdf, "This is bold text", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "This is bold text", textx, size.y, info);
 	info.font = pdf->default_font_ref;
 
 	info.font = pdf->default_font_italic_ref;
-	NEXT_LINE; anr_pdf_add_text(pdf, "This is italic text", 10, size.y, info);
+	NEXT_LINE; anr_pdf_add_text(pdf, "This is italic text", textx, size.y, info);
 	info.font = pdf->default_font_ref;
 
 	info.font = pdf->default_font_italic_bold_ref;
-	NEXT_LINE; bold_text_link = anr_pdf_add_text(pdf, "This is a link in static bold text", 10, size.y, info);
+	NEXT_LINE; bold_text_link = anr_pdf_add_text(pdf, "This is a link in static bold text", textx, size.y, info);
 	info.font = pdf->default_font_ref;
 
+	anr_pdf_add_page_label(pdf, "1", ANR_PDF_ALIGN_LEFT);
  	anr_pdf_page pageref = anr_pdf_page_end(pdf);
 
 	anr_pdf_bookmark bm1 = anr_pdf_document_add_bookmark(pdf, pageref, NULL, NULL, "Chapter 1");
@@ -182,9 +187,13 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 
 			anr_pdf_img img = anr_pdf_embed_image(pdf, data, w*h*3, w, h, 8);
 			anr_pdf_add_image(pdf, img, 400, 200, size.x/4, size.y/4);
+
+			anr_pdf_page_set_thumbnail(pdf, img);
 		}
 	}
 
+	anr_pdf_add_page_label(pdf, "2", ANR_PDF_ALIGN_CENTER);
+	
 	anr_pdf_page pageref = anr_pdf_page_end(pdf);
 
 	anr_pdf_annot_cnf annot = ANR_PDF_ANNOT_CONF_DEFAULT;
@@ -206,6 +215,8 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 static anr_pdf_page create_page_3(anr_pdf* pdf)
 {
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
+
+	anr_pdf_add_page_label(pdf, "3", ANR_PDF_ALIGN_RIGHT);
 	anr_pdf_page pageref = anr_pdf_page_end(pdf);
 	return pageref;
 }
@@ -218,14 +229,14 @@ int main()
 		"Simple text document", "Aldrik", "Cool Banana's", 
 		"Text, Bananas", NULL, "anr_pdf Library", "20240318201500-00'00", NULL);
 
-	FILE* file = fopen("comic-sans.ttf", "rw");
+	FILE* file = fopen("ButterflyKids-Regular.ttf", "rw");
 	fseek(file, 0, SEEK_END);
 	size_t ttf_size = ftell(file);
 	printf("Comic sans: %d\n", (int)ttf_size);
 	rewind(file);
 	unsigned char* ttf_buffer = malloc(ttf_size);
 	fread(ttf_buffer, 1, ttf_size, file);
-	comic_sans = anr_pdf_embed_font(pdf, ttf_buffer, ttf_size);
+	comic_sans = anr_pdf_embed_ttf(pdf, ttf_buffer, ttf_size);
 
 	anr_pdf_page page1 = create_page_1(pdf);
 	anr_pdf_page page2 = create_page_2(pdf);
