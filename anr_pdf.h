@@ -1,19 +1,18 @@
 /*
-	anr_pdf->h - v0.1 - public domain pdf writer
+anr_pdf.h - v0.1 - public domain pdf writer
 
-	This is a single-header-file library for writing pdf files.
+This is a single-header-file library for writing pdf files.
 
-	Do this:
-		#ifdef ANR_PDF_IMPLEMENTATION
-	before you include this file in *one* C or C++ file to create the implementation.
+Do this:
+	#ifdef ANR_PDF_IMPLEMENTATION
+before you include this file in *one* C or C++ file to create the implementation.
 
-	QUICK NOTES:
-		Primarily of interest to developers making word processors.
-		This libray does not do any layout calculations / text wrapping for you.
-		Objects are displayed exactly where you put them!
+QUICK NOTES:
+	Primarily of interest to developers making word processors.
+	This libray does not do any layout calculations / text wrapping for you.
 
-	LICENSE
-		See end of file for license information.
+LICENSE
+	See end of file for license information.
 	
 */
 #ifndef INCLUDE_ANR_PDF_H
@@ -22,7 +21,6 @@
 // 	DOCUMENTATION
 //	This library follows the pdf 1.7 ISO 32000-1 standard
 //	https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf
-//
 //
 //	Coordinates & size are denoted in user space units. (inch / 72).
 //	When positioning objects, xy (0, 0) is on the bottomleft of the page.
@@ -33,25 +31,19 @@
 //
 //	IMPLEMENTED
 //		Text (fonts/sizes/colors/spacing/rotation)
-//		Bookmarks
-//		Primitives (lines/polygons/cubic beziers)
-//		Page & Document labeling
+//		Primitives (lines/polygons/cubic beziers/rectangles)
 //		Annotations (text/link/markup) + annotation threads
+//		Page & Document labeling
 //		Encoding (ASCIIHex)
 //		Images (rgb)
 //		TTF embedding
+//		Bookmarks
 //
 //	UNIMPLEMENTED
-//		Tables (using primitives)
 //		Password encryption (See chapter 7.6.1)
 //		Links
-//		Thumbnail images (See chapter 12.3.4)
-//		Form fields (textbox, checkbox)
 
 #include <inttypes.h>
-
-#define STB_TRUETYPE_IMPLEMENTATION
-#include "examples/stb_truetype.h"
 
 #ifndef ANRPDF_ASSERT
 #include <assert.h>
@@ -63,25 +55,25 @@
 #endif
 
 #ifndef ANR_PDF_MAX_PAGES
-#define ANR_PDF_MAX_PAGES 200
+#define ANR_PDF_MAX_PAGES 2000
 #endif
 
 
 #ifndef ANR_PDF_MAX_CUSTOM_FONTS
-#define ANR_PDF_MAX_CUSTOM_FONTS 5
+#define ANR_PDF_MAX_CUSTOM_FONTS 50
 #endif
 
 
 #ifndef ANR_PDF_MAX_BOOKMARKS
-#define ANR_PDF_MAX_BOOKMARKS 200
+#define ANR_PDF_MAX_BOOKMARKS 2000
 #endif
 
 #ifndef ANR_PDF_MAX_OBJECTS_PER_PAGE
-#define ANR_PDF_MAX_OBJECTS_PER_PAGE 1000
+#define ANR_PDF_MAX_OBJECTS_PER_PAGE 10000
 #endif
 
 #ifndef ANR_PDF_MAX_ANNOTATIONS_PER_PAGE
-#define ANR_PDF_MAX_ANNOTATIONS_PER_PAGE 50
+#define ANR_PDF_MAX_ANNOTATIONS_PER_PAGE 200
 #endif
 
 
@@ -270,7 +262,7 @@ typedef struct
 	int dash_pattern[2]; // default = empty = solid line
 	anr_pdf_color color; // default black
 	// @Unimplemented: automatic stroke adjustment, op SA, see table 58
-	// @Unimplemented: option to fill path with color
+	char fill;
 } anr_pdf_gfx_conf;
 
 // Parameters for annotations. all optional.
@@ -320,7 +312,6 @@ typedef struct
 		uint64_t objects_count;
 		anr_pdf_img images[ANR_PDF_MAX_OBJECTS_PER_PAGE];
 		uint32_t images_count;
-		anr_pdf_img thumbnail;
 	} page;
 
 	// list of pages
@@ -373,23 +364,27 @@ ANRPDFDEF anr_pdf_annot	anr_pdf_add_annotation_markup(anr_pdf* pdf, anr_pdf_page
 ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_text(anr_pdf* pdf, anr_pdf_page page, anr_pdf_obj obj, char* text, anr_pdf_annot_cnf data);
 ANRPDFDEF anr_pdf_annot anr_pdf_add_annotation_link(anr_pdf* pdf, anr_pdf_page src_page, anr_pdf_obj src_obj, anr_pdf_page dest_page, anr_pdf_obj* dest_obj, anr_pdf_annot_cnf data);
 
-// === OBJECT OPERATIONS ===
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx_conf gfx);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, float w, float h);
-ANRPDFDEF anr_pdf_obj 	anr_pdf_add_page_label(anr_pdf* pdf, const char* text, anr_pdf_align align);
+// === OBJECT OPERATIONS (pdf native) ===
+ANRPDFDEF anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info);
+ANRPDFDEF anr_pdf_obj anr_pdf_add_line(anr_pdf* pdf, anr_pdf_vecf p1, anr_pdf_vecf p2, anr_pdf_gfx_conf gfx);
+ANRPDFDEF anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
+ANRPDFDEF anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_length, anr_pdf_gfx_conf gfx);
+ANRPDFDEF anr_pdf_obj anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, float w, float h);
+
+// === OBJECT OPERATIONS (wrappers) ===
+ANRPDFDEF anr_pdf_obj anr_pdf_add_page_label(anr_pdf* pdf, const char* text, anr_pdf_align align);
+ANRPDFDEF anr_pdf_obj anr_pdf_add_table(anr_pdf* pdf, float* rows, uint32_t row_count, float* cols, uint32_t col_count, anr_pdf_color color);
+ANRPDFDEF anr_pdf_obj anr_pdf_add_rectangle(anr_pdf* pdf, anr_pdf_vecf tl, anr_pdf_vecf br, char fill, anr_pdf_color color);
 
 // === FILE EMBEDDING ===
 	// Image data is assumed to be in rgb color space. 3 bytes per pixel.
-ANRPDFDEF anr_pdf_img 	anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample);
-ANRPDFDEF anr_pdf_ref 	anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length);
+ANRPDFDEF anr_pdf_img anr_pdf_embed_image(anr_pdf* pdf, unsigned char* data, uint32_t length, uint32_t width, uint32_t height, uint8_t bits_per_sample);
+ANRPDFDEF anr_pdf_ref anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length);
 
 // === DEFAULT CONFIGS === 
-ANRPDFDEF anr_pdf_txt_conf		anr_pdf_txt_conf_default();
-ANRPDFDEF anr_pdf_gfx_conf		anr_pdf_gfx_conf_conf_default();
-ANRPDFDEF anr_pdf_annot_cnf		anr_pdf_annot_conf_default();
+ANRPDFDEF anr_pdf_txt_conf	anr_pdf_txt_conf_default();
+ANRPDFDEF anr_pdf_gfx_conf	anr_pdf_gfx_conf_conf_default();
+ANRPDFDEF anr_pdf_annot_cnf	anr_pdf_annot_conf_default();
 
 ////   end header file   /////////////////////////////////////////////////////
 #endif // End of INCLUDE_ANR_PDF_H
@@ -681,7 +676,6 @@ static void anr__pdf_append_document_catalog(anr_pdf* pdf)
 	anr__pdf_append_str_idref(pdf, "\n/Outlines %d 0 R", outlineref);
 	// @Unimplemented: pagemode (see Table 28)
 	anr__pdf_append_str_idref(pdf, "\n/Pages %d 0 R", treeref);
-	anr__pdf_append_str(pdf, "\n/PageMode /UseThumbs");
 	anr__pdf_append_str(pdf, "\n/PageLabels << /Nums [ 0 << /S /D >> ] >>"); // arabic numerals for page numbering.
 	anr__pdf_append_str(pdf, ">>");
 	anr__pdf_append_str(pdf, "\nendobj");
@@ -782,13 +776,7 @@ void anr_pdf_page_begin(anr_pdf* pdf, anr_pdf_page_size size)
 	pdf->page.objects_count = 0;
 	pdf->page.images_count = 0;
 	pdf->page.size = size;
-	pdf->page.thumbnail.ref = anr__pdf_emptyref();
 	// @Unimplemented: page rotation
-}
-
-void anr_pdf_page_set_thumbnail(anr_pdf* pdf, anr_pdf_img img)
-{
-	pdf->page.thumbnail = img;
 }
 
 anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
@@ -799,15 +787,16 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 	anr__pdf_append_str(pdf, "\n[/PDF /Text /ImageB /ImageC /ImageI]");
 	anr__pdf_append_str(pdf, "\nendobj");
 
+	anr_pdf_ref extgstateref = anr__pdf_begin_obj(pdf);
+	anr__pdf_append_str(pdf, "\n<< /Type /ExtGState /SA true >>");
+	anr__pdf_append_str(pdf, "\nendobj");
+
+
 	anr_pdf_ref pageref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n<</Type /Page");
 	uint64_t offset = anr__pdf_append_str(pdf, "\n/Parent "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is apended..
 	anr__pdf_append_str_idref(pdf, "\n/Resources <</ProcSet %d 0 R", procsetref);
-
-	// Set thumbnail image
-	if (anr__pdf_ref_valid(pdf->page.thumbnail.ref)) {
-		anr__pdf_append_str_idref(pdf, "\n/Thumb %d 0 R", pdf->page.thumbnail.ref);
-	}
+	anr__pdf_append_str_idref(pdf, "\n/ExtGState <</GS1 %d 0 R >>", extgstateref);
 
 	// Import all default fonts in page.
 	anr__pdf_append_str(pdf, "\n/Font <<");
@@ -831,7 +820,7 @@ anr_pdf_page anr_pdf_page_end(anr_pdf* pdf)
 
 	anr_pdf_vecf page_size = anr_pdf_page_get_size(pdf->page.size);
 	anr__pdf_append_printf(pdf, "\n/MediaBox [0 0 %.3f %.3f]", page_size.x, page_size.y);
-	uint64_t annotoffset = anr__pdf_append_str(pdf, "\n/Annots "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is apended..
+	uint64_t annotoffset = anr__pdf_append_str(pdf, "\n/Annots "ANR_PDF_PLACEHOLDER_REF" 0 R"); // ref is set when pagetree is appended..
 
 	// Add all objects to content array.
 	anr__pdf_append_str(pdf, "\n/Contents [\n");
@@ -857,7 +846,7 @@ anr_pdf_txt_conf anr_pdf_txt_conf_default()
 anr_pdf_gfx_conf anr_pdf_gfx_conf_conf_default()
 {
 	return (anr_pdf_gfx_conf){.line_cap = ANR_PDF_LINECAP_BUTT, .line_width = 0, .line_join = ANR_PDF_LINEJOIN_MITER, 
-		.miter_limit = 10, .dash_pattern = {0}, .color = ANR_PDF_RGB(0.0f,0.0f,0.0f)};
+		.miter_limit = 10, .dash_pattern = {0}, .color = ANR_PDF_RGB(0.0f,0.0f,0.0f), 0};
 }
 
 anr_pdf_annot_cnf anr_pdf_annot_conf_default()
@@ -884,7 +873,6 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	rec.w = rec.w - rec.x;
 	rec.h = rec.y - rec.h;
 
-	uint64_t stream_length = 0;
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, rec);
 
 	uint64_t write_start = anr__pdf_append_printf(pdf, "\n%d J", gfx.line_cap);
@@ -894,7 +882,7 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 	if (gfx.dash_pattern[0] > 0 && gfx.dash_pattern[1] > 0) {
 		anr__pdf_append_printf(pdf, "\n[%d %d] 0 d", gfx.dash_pattern[0], gfx.dash_pattern[1]);
 	}
-	anr__pdf_append_printf(pdf, "\n%.1f %.1f %.1f RG", gfx.color.r, gfx.color.g, gfx.color.b);
+	anr__pdf_append_printf(pdf, "\n%.1f %.1f %.1f %s", gfx.color.r, gfx.color.g, gfx.color.b, gfx.fill ? "rg" : "RG");
 
 	anr__pdf_append_printf(pdf, "\n%.3f %.3f m", data[0].x, data[0].y);
 	anr__pdf_append_printf(pdf, "\n%.3f %.3f %.3f %.3f %.3f %.3f c", 
@@ -907,7 +895,7 @@ anr_pdf_obj anr_pdf_add_cubic_bezier(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t 
 		anr__pdf_append_printf(pdf, "\n%.3f %.3f %.3f %.3f v", point1.x, point1.y, point2.x, point2.y);
 	}
 
-	anr__pdf_append_printf(pdf, "\nS");
+	anr__pdf_append_printf(pdf, gfx.fill ? "\nf" : "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
 	anr__pdf_end_content_obj(pdf, write_start);
@@ -938,7 +926,6 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 	rec.w = rec.w - rec.x;
 	rec.h = rec.y - rec.h;
 
-	uint64_t stream_length = 0;
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, rec);
 
 	uint64_t write_start = anr__pdf_append_printf(pdf, "\n%.3f %.3f m", data[0].x, data[0].y);
@@ -949,7 +936,7 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 	if (gfx.dash_pattern[0] > 0 && gfx.dash_pattern[1] > 0) {
 		anr__pdf_append_printf(pdf, "\n[%d %d] 0 d", gfx.dash_pattern[0], gfx.dash_pattern[1]);
 	}
-	anr__pdf_append_printf(pdf, "\n%.1f %.1f %.1f RG", gfx.color.r, gfx.color.g, gfx.color.b);
+	anr__pdf_append_printf(pdf, "\n%.1f %.1f %.1f %s", gfx.color.r, gfx.color.g, gfx.color.b, gfx.fill ? "rg" : "RG");
 
 	for (uint32_t i = 1; i < data_length; i++)
 	{
@@ -957,11 +944,50 @@ anr_pdf_obj anr_pdf_add_polygon(anr_pdf* pdf, anr_pdf_vecf* data, uint32_t data_
 		anr__pdf_append_printf(pdf, "\n%.3f %.3f l", point.x, point.y);
 	}
 
-	anr__pdf_append_printf(pdf, "\nS");
+	anr__pdf_append_printf(pdf, gfx.fill ? "\nf" : "\nS");
 	anr__pdf_append_printf(pdf, "\nn");
 
 	anr__pdf_end_content_obj(pdf, write_start);
 	return obj_ref;
+}
+
+anr_pdf_obj anr_pdf_add_rectangle(anr_pdf* pdf, anr_pdf_vecf tl, anr_pdf_vecf br, char fill, anr_pdf_color color)
+{
+	anr_pdf_vecf header[] = { tl, (anr_pdf_vecf){br.x, tl.y}, br, (anr_pdf_vecf){tl.x, br.y}  };
+	anr_pdf_gfx_conf conf = ANR_PDF_GFX_CONF_DEFAULT;
+	conf.fill = fill;
+	conf.color = color;
+	return anr_pdf_add_polygon(pdf, header, 4, conf);
+}
+
+anr_pdf_obj anr_pdf_add_table(anr_pdf* pdf, float* rows, uint32_t row_count, float* cols, uint32_t col_count, anr_pdf_color color)
+{
+	ANRPDF_ASSERT(row_count > 1);
+	ANRPDF_ASSERT(col_count > 1);
+
+	float ystart = rows[0];
+	float xstart = cols[0];
+	float yend = rows[row_count-1];
+	float xend = cols[col_count-1];
+
+	// Header row
+	anr_pdf_obj header = anr_pdf_add_rectangle(pdf, (anr_pdf_vecf){cols[0], rows[0]},  (anr_pdf_vecf){xend, rows[1]}, 1, color);
+
+	for (int i = 0; i < row_count; i++)
+	{
+		anr_pdf_vecf v1 = {xstart, rows[i]};
+		anr_pdf_vecf v2 = {xend, rows[i]};
+		anr_pdf_add_line(pdf, v1, v2, ANR_PDF_GFX_CONF_DEFAULT);
+	}
+
+	for (int i = 0; i < col_count; i++)
+	{
+		anr_pdf_vecf v1 = {cols[i], ystart};
+		anr_pdf_vecf v2 = {cols[i], yend};
+		anr_pdf_add_line(pdf, v1, v2, ANR_PDF_GFX_CONF_DEFAULT);
+	}
+
+	return header;
 }
 
 anr_pdf_obj anr_pdf_add_page_label(anr_pdf* pdf, const char* text, anr_pdf_align align)
@@ -983,8 +1009,7 @@ anr_pdf_obj anr_pdf_add_page_label(anr_pdf* pdf, const char* text, anr_pdf_align
 
 anr_pdf_obj anr_pdf_add_text(anr_pdf* pdf, const char* text, float x, float y, anr_pdf_txt_conf info) 
 {
-	uint64_t str_len = strlen(text); // we need to calculate string width somehow
-	uint64_t stream_length = 0;
+	uint64_t str_len = strlen(text); // @Unimplemented: we need to calculate string width somehow
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y + info.font_size, str_len*5, (float)info.font_size));
 	uint64_t write_start = anr__pdf_append_str(pdf, "\nBT");
 
@@ -1224,8 +1249,6 @@ anr_pdf_obj anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, f
 	memcpy(img.id, id, sizeof(img.id));
 	pdf->page.images[pdf->page.images_count++] = img;
 
-	float scale_horizontal = img.width / img.height;
-
 	anr_pdf_obj obj_ref = anr__pdf_begin_content_obj(pdf, ANR_PDF_REC(x, y, w, h));
 
 	uint64_t write_start = anr__pdf_append_str(pdf, "q");
@@ -1236,6 +1259,176 @@ anr_pdf_obj anr_pdf_add_image(anr_pdf* pdf, anr_pdf_img img, float x, float y, f
 	anr__pdf_end_content_obj(pdf, write_start);
 	return obj_ref;
 }
+
+////////////////////////////////////////////////////////////
+// code stripped from stb_truetype.h by Sean Barrett
+////////////////////////////////////////////////////////////
+
+#define ttBYTE(p)     (* (stbtt_uint8 *) (p))
+#define ttCHAR(p)     (* (stbtt_int8 *) (p))
+#define ttFixed(p)    ttLONG(p)
+typedef unsigned char   stbtt_uint8;
+typedef signed   char   stbtt_int8;
+typedef unsigned short  stbtt_uint16;
+typedef signed   short  stbtt_int16;
+typedef unsigned int    stbtt_uint32;
+typedef signed   int    stbtt_int32;
+static stbtt_uint16 ttUSHORT(stbtt_uint8 *p) { return p[0]*256 + p[1]; }
+static stbtt_int16 ttSHORT(stbtt_uint8 *p)   { return p[0]*256 + p[1]; }
+static stbtt_uint32 ttULONG(stbtt_uint8 *p)  { return (p[0]<<24) + (p[1]<<16) + (p[2]<<8) + p[3]; }
+#define stbtt_tag4(p,c0,c1,c2,c3) ((p)[0] == (c0) && (p)[1] == (c1) && (p)[2] == (c2) && (p)[3] == (c3))
+#define stbtt_tag(p,str)           stbtt_tag4(p,str[0],str[1],str[2],str[3])
+
+int stbtt_FindGlyphIndex(unsigned char* data, uint32_t index_map, int unicode_codepoint)
+{
+   stbtt_uint16 format = ttUSHORT(data + index_map + 0);
+   if (format == 0) { // apple byte encoding
+      stbtt_int32 bytes = ttUSHORT(data + index_map + 2);
+      if (unicode_codepoint < bytes-6)
+         return ttBYTE(data + index_map + 6 + unicode_codepoint);
+      return 0;
+   } else if (format == 6) {
+      stbtt_uint32 first = ttUSHORT(data + index_map + 6);
+      stbtt_uint32 count = ttUSHORT(data + index_map + 8);
+      if ((stbtt_uint32) unicode_codepoint >= first && (stbtt_uint32) unicode_codepoint < first+count)
+         return ttUSHORT(data + index_map + 10 + (unicode_codepoint - first)*2);
+      return 0;
+   } else if (format == 2) {
+      
+      return 0;
+   } else if (format == 4) { // standard mapping for windows fonts: binary search collection of ranges
+      stbtt_uint16 segcount = ttUSHORT(data+index_map+6) >> 1;
+      stbtt_uint16 searchRange = ttUSHORT(data+index_map+8) >> 1;
+      stbtt_uint16 entrySelector = ttUSHORT(data+index_map+10);
+      stbtt_uint16 rangeShift = ttUSHORT(data+index_map+12) >> 1;
+
+      // do a binary search of the segments
+      stbtt_uint32 endCount = index_map + 14;
+      stbtt_uint32 search = endCount;
+
+      if (unicode_codepoint > 0xffff)
+         return 0;
+
+      // they lie from endCount .. endCount + segCount
+      // but searchRange is the nearest power of two, so...
+      if (unicode_codepoint >= ttUSHORT(data + search + rangeShift*2))
+         search += rangeShift*2;
+
+      // now decrement to bias correctly to find smallest
+      search -= 2;
+      while (entrySelector) {
+         stbtt_uint16 end;
+         searchRange >>= 1;
+         end = ttUSHORT(data + search + searchRange*2);
+         if (unicode_codepoint > end)
+            search += searchRange*2;
+         --entrySelector;
+      }
+      search += 2;
+
+      {
+         stbtt_uint16 offset, start, last;
+         stbtt_uint16 item = (stbtt_uint16) ((search - endCount) >> 1);
+
+         start = ttUSHORT(data + index_map + 14 + segcount*2 + 2 + 2*item);
+         last = ttUSHORT(data + endCount + 2*item);
+         if (unicode_codepoint < start || unicode_codepoint > last)
+            return 0;
+
+         offset = ttUSHORT(data + index_map + 14 + segcount*6 + 2 + 2*item);
+         if (offset == 0)
+            return (stbtt_uint16) (unicode_codepoint + ttSHORT(data + index_map + 14 + segcount*4 + 2 + 2*item));
+
+         return ttUSHORT(data + offset + (unicode_codepoint-start)*2 + index_map + 14 + segcount*6 + 2 + 2*item);
+      }
+   } else if (format == 12 || format == 13) {
+      stbtt_uint32 ngroups = ttULONG(data+index_map+12);
+      stbtt_int32 low,high;
+      low = 0; high = (stbtt_int32)ngroups;
+      // Binary search the right group.
+      while (low < high) {
+         stbtt_int32 mid = low + ((high-low) >> 1); // rounds down, so low <= mid < high
+         stbtt_uint32 start_char = ttULONG(data+index_map+16+mid*12);
+         stbtt_uint32 end_char = ttULONG(data+index_map+16+mid*12+4);
+         if ((stbtt_uint32) unicode_codepoint < start_char)
+            high = mid;
+         else if ((stbtt_uint32) unicode_codepoint > end_char)
+            low = mid+1;
+         else {
+            stbtt_uint32 start_glyph = ttULONG(data+index_map+16+mid*12+8);
+            if (format == 12)
+               return start_glyph + unicode_codepoint-start_char;
+            else // format == 13
+               return start_glyph;
+         }
+      }
+      return 0; // not found
+   }
+   // @TODO
+   return 0;
+}
+static stbtt_uint32 stbtt__find_table(unsigned char *data, stbtt_uint32 fontstart, const char *tag)
+{
+   stbtt_int32 num_tables = ttUSHORT(data+fontstart+4);
+   stbtt_uint32 tabledir = fontstart + 12;
+   stbtt_int32 i;
+   for (i=0; i < num_tables; ++i) {
+      stbtt_uint32 loc = tabledir + 16*i;
+      if (stbtt_tag(data+loc+0, tag))
+         return ttULONG(data+loc+8);
+   }
+   return 0;
+}
+void stbtt_GetGlyphHMetrics(unsigned char* data, uint32_t hmtx, int glyph_index, int *advanceWidth, int *leftSideBearing)
+{
+	uint32_t hhea = stbtt__find_table(data, 0, "hhea");
+	stbtt_uint16 numOfLongHorMetrics = ttUSHORT(data+hhea + 34);
+	if (glyph_index < numOfLongHorMetrics) {
+		if (advanceWidth)     *advanceWidth    = ttSHORT(data + hmtx + 4*glyph_index);
+		if (leftSideBearing)  *leftSideBearing = ttSHORT(data + hmtx + 4*glyph_index + 2);
+	} else {
+		if (advanceWidth)     *advanceWidth    = ttSHORT(data + hmtx + 4*(numOfLongHorMetrics-1));
+		if (leftSideBearing)  *leftSideBearing = ttSHORT(data + hmtx + 4*numOfLongHorMetrics + 2*(glyph_index - numOfLongHorMetrics));
+	}
+}
+void stbtt_GetCodepointHMetrics(unsigned char* data, uint32_t hmtx, uint32_t index_map, int codepoint, int *advanceWidth, int *leftSideBearing)
+{
+   stbtt_GetGlyphHMetrics(data, hmtx, stbtt_FindGlyphIndex(data,index_map,codepoint), advanceWidth, leftSideBearing);
+}
+uint32_t anr__pdf_get_ttf_codepoint_width(unsigned char* data, uint32_t codepoint)
+{
+	uint32_t hmtx = stbtt__find_table(data, 0, "hmtx");
+	uint32_t cmap = stbtt__find_table(data, 0, "cmap");
+
+	uint32_t numTables = ttUSHORT(data + cmap + 2);
+	uint32_t index_map = 0;
+	for (uint32_t i=0; i < numTables; ++i) {
+		stbtt_uint32 encoding_record = cmap + 4 + 8 * i;
+		// find an encoding we understand:
+		switch(ttUSHORT(data+encoding_record)) {
+			case 3:
+				switch (ttUSHORT(data+encoding_record+2)) {
+				case 1:
+				case 10:
+					index_map = cmap + ttULONG(data+encoding_record+4);
+					break;
+				}
+				break;
+			case 0:
+				index_map = cmap + ttULONG(data+encoding_record+4);
+				break;
+		}
+	}
+
+	int32_t advance;
+	int32_t lsb;
+	stbtt_GetCodepointHMetrics(data, hmtx, index_map, codepoint, &advance, &lsb);
+	return advance;
+}
+
+////////////////////////////////////////////////////////////
+// end of code from stb_truetype.h
+////////////////////////////////////////////////////////////
 
 anr_pdf_ref anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length)
 {
@@ -1251,18 +1444,15 @@ anr_pdf_ref anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length
 	anr_pdf_ref widths_ref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n[ ");
 	{
-		stbtt_fontinfo info;
-		stbtt_InitFont(&info, data, stbtt_GetFontOffsetForIndex(data,0));
 		for (uint32_t i = 0; i < 0xFFFF; i++)
 		{
-			int advance;
-			int lsb;
-			stbtt_GetCodepointHMetrics(&info, i, &advance, &lsb);
-			anr__pdf_append_printf(pdf, "%d ", (int)(advance));
+			int advance = anr__pdf_get_ttf_codepoint_width(data, i);
+			anr__pdf_append_printf(pdf, "%d ", advance);
 		}
 	}
 	anr__pdf_append_str(pdf, "]\nendobj");
 
+	// These values have been pulled from my behind.
 	anr_pdf_ref descriptor_ref = anr__pdf_begin_obj(pdf);
 	anr__pdf_append_str(pdf, "\n<</Type /FontDescriptor");
 	anr__pdf_append_str_idref(pdf, "\n/FontName /F%d", descriptor_ref);

@@ -1,5 +1,5 @@
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "res/stb_image.h"
 
 #define ANR_PDF_BUFFER_RESERVE 100000000
 
@@ -114,6 +114,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 			gfx.line_join = ANR_PDF_LINEJOIN_MITER;
 			gfx.miter_limit = 1;
 			gfx.color = ANR_PDF_RGB(1.0f, 0.0f, 0.0f);
+			gfx.fill = 1;
 
 			anr_pdf_vecf line_data[] = {
 				{size.x - 10.0f, size.y - 10.0f},
@@ -152,6 +153,7 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 			gfx.line_cap = ANR_PDF_LINECAP_ROUNDED;
 			gfx.line_width = 4;
 			gfx.color = ANR_PDF_RGB(0.0f, 1.0f, 0.0f);
+			gfx.fill = 1;
 
 			anr_pdf_vecf line_data[] = {
 				{100.0f, 100.0f}, {200.0f, 200.0f}, {300.0f, 100.0f},
@@ -173,22 +175,24 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 
 		{
 			int w, h, bbs;
-			unsigned char *data = stbi_load("greenland_grid_velo.bmp", &w, &h, &bbs, 3);	
+			unsigned char *data = stbi_load("res/greenland_grid_velo.bmp", &w, &h, &bbs, 3);	
 			printf("Bmp greenland: %d %d %d\n", w, h, bbs);
 
 			anr_pdf_img img = anr_pdf_embed_image(pdf, data, w*h*bbs, w, h, 8);
 			anr_pdf_add_image(pdf, img, 0, 200, size.x/4, size.y/4);
+
+			free(data);
 		}
 
 		{
 			int w, h, bbs;
-			unsigned char *data = stbi_load("spongebob.png", &w, &h, &bbs,3);
+			unsigned char *data = stbi_load("res/spongebob.png", &w, &h, &bbs,3);
 			printf("Bmp greenland: %d %d %d\n", w, h, bbs);
 
 			anr_pdf_img img = anr_pdf_embed_image(pdf, data, w*h*3, w, h, 8);
 			anr_pdf_add_image(pdf, img, 400, 200, size.x/4, size.y/4);
 
-			anr_pdf_page_set_thumbnail(pdf, img);
+			free(data);
 		}
 	}
 
@@ -215,6 +219,15 @@ static anr_pdf_page create_page_2(anr_pdf* pdf)
 static anr_pdf_page create_page_3(anr_pdf* pdf)
 {
 	anr_pdf_page_begin(pdf, ANR_PDF_PAGE_SIZE_A4);
+	anr_pdf_vecf size = anr_pdf_page_get_size(ANR_PDF_PAGE_SIZE_A4);
+	
+	float table_starty = size.y - 50;
+	float table_startx = 50;
+	float col_w = (size.x - (table_startx*2)) / 4;
+	float row_h = 60;
+	float rows[] = {table_starty-(row_h*0), table_starty-(row_h*1),  table_starty-(row_h*2),  table_starty-(row_h*3),  table_starty-(row_h*4)};
+	float cols[] = {table_startx+(col_w*0), table_startx+(col_w*1), table_startx+(col_w*3), table_startx+(col_w*4)};
+	anr_pdf_add_table(pdf, rows, sizeof(rows)/sizeof(float), cols, sizeof(cols)/sizeof(float), ANR_PDF_RGB(0.8f, 0.8f, 0.8f));
 
 	anr_pdf_add_page_label(pdf, "3", ANR_PDF_ALIGN_RIGHT);
 	anr_pdf_page pageref = anr_pdf_page_end(pdf);
@@ -229,7 +242,7 @@ int main()
 		"Simple text document", "Aldrik", "Cool Banana's", 
 		"Text, Bananas", NULL, "anr_pdf Library", "20240318201500-00'00", NULL);
 
-	FILE* file = fopen("ButterflyKids-Regular.ttf", "rw");
+	FILE* file = fopen("res/ButterflyKids-Regular.ttf", "rw");
 	fseek(file, 0, SEEK_END);
 	size_t ttf_size = ftell(file);
 	printf("Comic sans: %d\n", (int)ttf_size);
@@ -237,10 +250,11 @@ int main()
 	unsigned char* ttf_buffer = malloc(ttf_size);
 	fread(ttf_buffer, 1, ttf_size, file);
 	comic_sans = anr_pdf_embed_ttf(pdf, ttf_buffer, ttf_size);
+	free(ttf_buffer);
 
 	anr_pdf_page page1 = create_page_1(pdf);
 	anr_pdf_page page2 = create_page_2(pdf);
-	anr_pdf_page page3 = create_page_3(pdf);
+	create_page_3(pdf);
 
 	anr_pdf_add_annotation_link(pdf, page1, bold_text_link, page2, NULL, ANR_PDF_ANNOT_CONF_DEFAULT);
 
