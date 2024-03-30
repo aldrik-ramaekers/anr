@@ -87,10 +87,6 @@ LICENSE
 
 #define ANR_PDF_PLACEHOLDER_REF "00000000"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef uint64_t anr_pdf_id;
 
 typedef struct 
@@ -1486,9 +1482,6 @@ anr_pdf_ref anr_pdf_embed_ttf(anr_pdf* pdf, unsigned char* data, uint32_t length
 	return ref;
 }
 
-#ifdef __cplusplus
-}
-#endif
 #endif
 
 /*

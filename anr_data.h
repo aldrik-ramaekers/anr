@@ -88,17 +88,17 @@ typedef union
 
 typedef struct
 {
-	uint8_t 	(*add)(void* list, void* ptr);
-	void 		(*free)(void* list);
-	void 		(*print)(void* list);
+	uint8_t 	(*add)(void* ds, void* ptr);
+	void 		(*free)(void* ds);
+	void 		(*print)(void* ds);
 	void* 		(*find_at)(void*,uint32_t); // returns data
-	uint32_t 	(*find_by)(void* list, char* ptr); // returns index, or -1 if not found
-	uint8_t 	(*remove_at)(void* list, uint32_t index); // returns 1 on success, 0 on fail
-	uint8_t 	(*remove_by)(void* list, void* ptr); // returns 1 on success, 0 on fail
-	uint8_t 	(*insert)(void* list, uint32_t index, void* ptr); // returns 1 on success, 0 on fail
-	uint32_t 	(*length)(void* list);
-	anr_iter 	(*iter_start)(void* ll);
-	uint8_t 	(*iter_next)(void* ll, anr_iter* iter); // returns 1 on success, 0 if no more items to iterate
+	uint32_t 	(*find_by)(void* ds, char* ptr); // returns index, or -1 if not found
+	uint8_t 	(*remove_at)(void* ds, uint32_t index); // returns 1 on success, 0 on fail
+	uint8_t 	(*remove_by)(void* ds, void* ptr); // returns 1 on success, 0 on fail
+	uint8_t 	(*insert)(void* ds, uint32_t index, void* ptr); // returns 1 on success, 0 on fail
+	uint32_t 	(*length)(void* ds);
+	anr_iter 	(*iter_start)(void* ds);
+	uint8_t 	(*iter_next)(void* ds, anr_iter* iter); // returns 1 on success, 0 if no more items to iterate
 } anr_ds_table;
 
 typedef struct
@@ -109,31 +109,31 @@ typedef struct
 
 // === linked list ===
 ANRDATADEF anr_linked_list 	anr_linked_list_create();
-ANRDATADEF uint8_t 			anr_linked_list_add(void* list, void* ptr);
-ANRDATADEF void 			anr_linked_list_free(void* list);
-ANRDATADEF void 			anr_linked_list_print(void* list);
-ANRDATADEF void* 			anr_linked_list_find_at(void* list, uint32_t index);
-ANRDATADEF uint32_t 		anr_linked_list_find_by(void* list, char* ptr);
-ANRDATADEF uint8_t 			anr_linked_list_remove_at(void* list, uint32_t index);
-ANRDATADEF uint8_t 			anr_linked_list_remove_by(void* list, void* ptr);
-ANRDATADEF uint8_t 			anr_linked_list_insert(void* list, uint32_t index, void* ptr);
-ANRDATADEF uint32_t 		anr_linked_list_length(void* list);
-ANRDATADEF anr_iter 		anr_linked_list_iter_start(void* list);
-ANRDATADEF uint8_t 			anr_linked_list_iter_next(void* list, anr_iter* iter);
+ANRDATADEF uint8_t 			anr_linked_list_add(void* ds, void* ptr);
+ANRDATADEF void 			anr_linked_list_free(void* ds);
+ANRDATADEF void 			anr_linked_list_print(void* ds);
+ANRDATADEF void* 			anr_linked_list_find_at(void* ds, uint32_t index);
+ANRDATADEF uint32_t 		anr_linked_list_find_by(void* ds, char* ptr);
+ANRDATADEF uint8_t 			anr_linked_list_remove_at(void* ds, uint32_t index);
+ANRDATADEF uint8_t 			anr_linked_list_remove_by(void* ds, void* ptr);
+ANRDATADEF uint8_t 			anr_linked_list_insert(void* ds, uint32_t index, void* ptr);
+ANRDATADEF uint32_t 		anr_linked_list_length(void* ds);
+ANRDATADEF anr_iter 		anr_linked_list_iter_start(void* ds);
+ANRDATADEF uint8_t 			anr_linked_list_iter_next(void* ds, anr_iter* iter);
 
 // === dynamic array ===
 ANRDATADEF anr_array 	anr_array_create(uint32_t data_size, uint32_t reserve_count);
-ANRDATADEF uint8_t 		anr_array_add(void* list, void* ptr);
-ANRDATADEF void 		anr_array_free(void* list);
-ANRDATADEF void 		anr_array_print(void* list);
-ANRDATADEF void* 		anr_array_find_at(void* list, uint32_t index);
-ANRDATADEF uint32_t 	anr_array_find_by(void* list, char* ptr);
-ANRDATADEF uint8_t 		anr_array_remove_at(void* list, uint32_t index);
-ANRDATADEF uint8_t 		anr_array_remove_by(void* list, void* ptr);
-ANRDATADEF uint8_t 		anr_array_insert(void* list, uint32_t index, void* ptr);
-ANRDATADEF uint32_t 	anr_array_length(void* list);
-ANRDATADEF anr_iter 	anr_array_iter_start(void* list);
-ANRDATADEF uint8_t 		anr_array_iter_next(void* list, anr_iter* iter);
+ANRDATADEF uint8_t 		anr_array_add(void* ds, void* ptr);
+ANRDATADEF void 		anr_array_free(void* ds);
+ANRDATADEF void 		anr_array_print(void* ds);
+ANRDATADEF void* 		anr_array_find_at(void* ds, uint32_t index);
+ANRDATADEF uint32_t 	anr_array_find_by(void* ds, char* ptr);
+ANRDATADEF uint8_t 		anr_array_remove_at(void* ds, uint32_t index);
+ANRDATADEF uint8_t 		anr_array_remove_by(void* ds, void* ptr);
+ANRDATADEF uint8_t 		anr_array_insert(void* ds, uint32_t index, void* ptr);
+ANRDATADEF uint32_t 	anr_array_length(void* ds);
+ANRDATADEF anr_iter 	anr_array_iter_start(void* ds);
+ANRDATADEF uint8_t 		anr_array_iter_next(void* ds, anr_iter* iter);
 
 anr_ds_table _ds_ll = 
 {
