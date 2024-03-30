@@ -7,6 +7,10 @@ Do this:
 	#ifdef ANR_DATA_IMPLEMENTATION
 before you include this file in *one* C or C++ file to create the implementation.
 
+The datastructures are almost completely interchangeable if you use the macros. See examples/test_data.c
+important differences:
+	- linked list finds data by comparing ptr's, array finds data by comparing memory.
+
 LICENSE
 	See end of file for license information.
 	
@@ -36,6 +40,7 @@ LICENSE
 typedef enum
 {
 	ANR_DS_LINKEDLIST = 0,
+	ANR_DS_DYNAMIC_ARRAY = 1,
 } anr_ds_type;
 
 typedef struct
@@ -52,6 +57,16 @@ typedef struct
 	anr_linked_list_node* last;
 	uint32_t length;
 } anr_linked_list;
+
+typedef struct
+{
+	anr_ds_type ds_type;
+	void* data;
+	uint32_t item_length;
+	uint32_t reserve_size;
+	uint32_t reserved;
+	uint32_t length;
+} anr_array;
 
 typedef struct
 {
@@ -76,14 +91,14 @@ typedef struct
 	uint8_t 	(*add)(void* list, void* ptr);
 	void 		(*free)(void* list);
 	void 		(*print)(void* list);
-	void* 		(*find_at)(void*,uint32_t);
-	uint32_t 	(*find_by)(void* list, char* ptr);
-	uint8_t 	(*remove_at)(void* list, uint32_t index);
-	uint8_t 	(*remove_by)(void* list, void* ptr);
-	uint8_t 	(*insert)(void* list, uint32_t index, void* ptr);
+	void* 		(*find_at)(void*,uint32_t); // returns data
+	uint32_t 	(*find_by)(void* list, char* ptr); // returns index, or -1 if not found
+	uint8_t 	(*remove_at)(void* list, uint32_t index); // returns 1 on success, 0 on fail
+	uint8_t 	(*remove_by)(void* list, void* ptr); // returns 1 on success, 0 on fail
+	uint8_t 	(*insert)(void* list, uint32_t index, void* ptr); // returns 1 on success, 0 on fail
 	uint32_t 	(*length)(void* list);
 	anr_iter 	(*iter_start)(void* ll);
-	uint8_t 	(*iter_next)(void* ll, anr_iter* iter);
+	uint8_t 	(*iter_next)(void* ll, anr_iter* iter); // returns 1 on success, 0 if no more items to iterate
 } anr_ds_table;
 
 typedef struct
@@ -106,6 +121,20 @@ ANRDATADEF uint32_t 		anr_linked_list_length(void* list);
 ANRDATADEF anr_iter 		anr_linked_list_iter_start(void* list);
 ANRDATADEF uint8_t 			anr_linked_list_iter_next(void* list, anr_iter* iter);
 
+// === dynamic array ===
+ANRDATADEF anr_array 	anr_array_create(uint32_t data_size, uint32_t reserve_count);
+ANRDATADEF uint8_t 		anr_array_add(void* list, void* ptr);
+ANRDATADEF void 		anr_array_free(void* list);
+ANRDATADEF void 		anr_array_print(void* list);
+ANRDATADEF void* 		anr_array_find_at(void* list, uint32_t index);
+ANRDATADEF uint32_t 	anr_array_find_by(void* list, char* ptr);
+ANRDATADEF uint8_t 		anr_array_remove_at(void* list, uint32_t index);
+ANRDATADEF uint8_t 		anr_array_remove_by(void* list, void* ptr);
+ANRDATADEF uint8_t 		anr_array_insert(void* list, uint32_t index, void* ptr);
+ANRDATADEF uint32_t 	anr_array_length(void* list);
+ANRDATADEF anr_iter 	anr_array_iter_start(void* list);
+ANRDATADEF uint8_t 		anr_array_iter_next(void* list, anr_iter* iter);
+
 anr_ds_table _ds_ll = 
 {
 	anr_linked_list_add,
@@ -121,11 +150,28 @@ anr_ds_table _ds_ll =
 	anr_linked_list_iter_next,
 };
 
+anr_ds_table _ds_array = 
+{
+	anr_array_add,
+	anr_array_free,
+	anr_array_print,
+	anr_array_find_at,
+	anr_array_find_by,
+	anr_array_remove_at,
+	anr_array_remove_by,
+	anr_array_insert,
+	anr_array_length,
+	anr_array_iter_start,
+	anr_array_iter_next,
+};
+
 anr_ds_pair _ds_arr[] = 
 {
 	{ANR_DS_LINKEDLIST, &_ds_ll},
+	{ANR_DS_DYNAMIC_ARRAY, &_ds_array},
 };
 
+#define ANR_DS_ARRAY(_data_size, _reserve_count) anr_array_create(_data_size, _reserve_count)
 #define ANR_DS_LINKED_LIST anr_linked_list_create()
 
 #define ANR_DS_ADD(__ds, __ptr) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->add((void*)__ds, __ptr)
@@ -148,8 +194,9 @@ anr_ds_pair _ds_arr[] =
 
 #ifdef ANR_DATA_IMPLEMENTATION
 
-anr_linked_list prev_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
+#ifdef ANR_DATA_DEBUG
 anr_linked_list curr_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
+anr_linked_list prev_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
 
 static void anr__print_diff()
 {
@@ -163,7 +210,7 @@ static void anr__print_diff()
 		char* curr_line = (i < curr_print.length) ? ANR_DS_FIND_AT(&curr_print, i) : 0;
 		if (curr_line)
 		{
-			printf(curr_line);
+			printf("%s", curr_line);
 			if (i < prev_print.length) moveup(1);
 		}
 		
@@ -188,10 +235,11 @@ static void anr__print_diff()
 	curr_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
 }
 
-void anr_linked_list_print(void* ll)
+
+void anr_linked_list_print(void* ds)
 {
 	
-	anr_linked_list* list = ll;
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 
@@ -206,19 +254,24 @@ void anr_linked_list_print(void* ll)
 		iter = iter->next;
 		count++;
 	}
-
 	anr__print_diff();
 }
-
-uint32_t anr_linked_list_length(void* ll)
+#else
+void anr_linked_list_print(void* ds)
 {
-	anr_linked_list* list = ll;
+	(void)ds;
+}
+#endif
+
+uint32_t anr_linked_list_length(void* ds)
+{
+	anr_linked_list* list = ds;
 	return list->length;
 }
 
-anr_iter anr_linked_list_iter_start(void* ll)
+anr_iter anr_linked_list_iter_start(void* ds)
 {
-	(void)ll;
+	(void)ds;
 	anr_iter iter;
 	iter.ll.node = NULL;
 	iter.index = -1;
@@ -226,9 +279,11 @@ anr_iter anr_linked_list_iter_start(void* ll)
 	return iter;
 }
 
-uint8_t anr_linked_list_iter_next(void* ll, anr_iter* iter)
+uint8_t anr_linked_list_iter_next(void* ds, anr_iter* iter)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(iter);
+	anr_linked_list* list = ds;
 	if (iter->ll.node == NULL) iter->ll.node = list->first;
 	else iter->ll.node = iter->ll.node->next;
 	iter->index++;
@@ -236,9 +291,10 @@ uint8_t anr_linked_list_iter_next(void* ll, anr_iter* iter)
 	return iter->ll.node != NULL;
 }
 
-void anr_linked_list_free(void* ll)
+void anr_linked_list_free(void* ds)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->last;
 	anr_linked_list_node* last = iter;
 	while (iter)
@@ -251,9 +307,10 @@ void anr_linked_list_free(void* ll)
 	free(last);
 }
 
-uint8_t anr_linked_list_insert(void* ll, uint32_t index, void* ptr)
+uint8_t anr_linked_list_insert(void* ds, uint32_t index, void* ptr)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	anr_linked_list* list = ds;
 
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
@@ -292,9 +349,10 @@ uint8_t anr_linked_list_insert(void* ll, uint32_t index, void* ptr)
 	return 1;
 }
 
-uint8_t anr_linked_list_remove_at(void* ll, uint32_t index)
+uint8_t anr_linked_list_remove_at(void* ds, uint32_t index)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 	while (iter)
@@ -325,9 +383,11 @@ uint8_t anr_linked_list_remove_at(void* ll, uint32_t index)
 	return 0;
 }
 
-uint8_t anr_linked_list_remove_by(void* ll, void* ptr)
+uint8_t anr_linked_list_remove_by(void* ds, void* ptr)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->first;
 	while (iter)
 	{
@@ -356,9 +416,11 @@ uint8_t anr_linked_list_remove_by(void* ll, void* ptr)
 	return 0;
 }
 
-uint32_t anr_linked_list_find_by(void* ll, char* ptr)
+uint32_t anr_linked_list_find_by(void* ds, char* ptr)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 	while (iter)
@@ -370,9 +432,10 @@ uint32_t anr_linked_list_find_by(void* ll, char* ptr)
 	return -1;
 }
 
-void* anr_linked_list_find_at(void* ll, uint32_t index)
+void* anr_linked_list_find_at(void* ds, uint32_t index)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 	while (iter)
@@ -389,9 +452,11 @@ anr_linked_list anr_linked_list_create()
 	return (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
 }
 
-uint8_t anr_linked_list_add(void* ll, void* ptr)
+uint8_t anr_linked_list_add(void* ds, void* ptr)
 {
-	anr_linked_list* list = ll;
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = list->first;
 	do
 	{
@@ -409,8 +474,182 @@ uint8_t anr_linked_list_add(void* ll, void* ptr)
 
 		iter = iter->next;
 	} while (iter);
+	
 	ANRDATA_ASSERT(0);
 	return 0;
+}
+
+
+anr_array anr_array_create(uint32_t data_size, uint32_t reserve_count)
+{
+	ANRDATA_ASSERT(data_size > 0);
+	ANRDATA_ASSERT(reserve_count > 0);
+
+	anr_array arr = (anr_array){ANR_DS_DYNAMIC_ARRAY, .data = 0, .item_length = data_size, .length = 0, .reserve_size = reserve_count, .reserved = 0};
+	arr.reserved = data_size * reserve_count;
+	arr.data = malloc(arr.reserved);
+	ANRDATA_ASSERT(arr.data);
+
+	return arr;
+}
+
+uint8_t anr_array_add(void* ds, void* ptr)
+{
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+
+	anr_array* arr = (anr_array*)ds;
+
+	if (arr->length >= arr->reserved)
+	{
+		arr->reserved += arr->reserve_size*arr->item_length;
+		arr->data = realloc(arr->data, arr->reserved);
+		ANRDATA_ASSERT(arr->data);
+	}
+
+	memcpy(arr->data + (arr->length * arr->item_length), ptr, arr->item_length);
+	arr->length++;
+
+	return 1;
+}
+void anr_array_free(void* ds)
+{
+	ANRDATA_ASSERT(ds);
+
+	anr_array* arr = (anr_array*)ds;
+	free(arr->data);
+}
+
+#ifdef ANR_DATA_DEBUG
+void anr_array_print(void* ds)
+{
+	ANRDATA_ASSERT(ds);
+
+	anr_array* arr = ds;
+	char* buffer = malloc(200);
+	snprintf(buffer, 200, "array %p has %d items, %d reserved\n", arr, arr->length, arr->reserved);
+	ANR_DS_ADD(&curr_print, buffer);
+	for (int i = 0; i < arr->length; i++)
+	{
+		char* buffer = malloc(200);
+		snprintf(buffer, 200, "#%d ", i);
+		char* data = anr_array_find_at(ds, i);
+		for (int x = 0; x < arr->item_length; x++) {
+			snprintf(buffer+strlen(buffer), 200, "%x", *(char*)(data + x));
+		}
+		snprintf(buffer+strlen(buffer), 200, "\n");
+		ANR_DS_ADD(&curr_print, buffer);
+	}
+	#ifdef ANR_DATA_DEBUG
+	anr__print_diff();
+	#else
+	ANR_DS_FREE(&curr_print);
+	curr_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
+	#endif
+}
+#else
+void anr_array_print(void* ds)
+{
+	(void)ds;
+}
+#endif
+
+void* anr_array_find_at(void* ds, uint32_t index)
+{
+	ANRDATA_ASSERT(ds);
+	anr_array* arr = ds;
+	if(index >= arr->length) return 0;
+
+	return arr->data + (index * arr->item_length);
+}
+uint32_t anr_array_find_by(void* ds, char* ptr)
+{
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+	anr_array* arr = (anr_array*)ds;
+
+	for (int i = 0; i < arr->length; i++)
+	{
+		void* data = anr_array_find_at(ds, i);
+		if (memcmp(data, ptr, arr->item_length) == 0) {
+			return i;
+		}
+	}
+
+	return -1;
+}
+uint8_t anr_array_remove_at(void* ds, uint32_t index)
+{
+	ANRDATA_ASSERT(ds);
+	anr_array* arr = (anr_array*)ds;
+	if (index >= arr->length) return 0;
+	if (index < 0) return 0;
+	uint32_t mem_to_move = (arr->length - index - 1) * arr->item_length;
+	uint32_t mem_to_overwrite = index * arr->item_length;
+	uint32_t mem_to_copy = (index+1) * arr->item_length;
+	memmove(arr->data + mem_to_overwrite, arr->data + mem_to_copy, mem_to_move);
+	arr->length--;
+	return 1;
+}
+uint8_t anr_array_remove_by(void* ds, void* ptr)
+{
+	uint32_t index = anr_array_find_by(ds, ptr);
+	if (index == -1) return 0;
+
+	anr_array* arr = (anr_array*)ds;
+
+	if (index == arr->length-1) {
+		arr->length--;
+		return 1;
+	}
+
+	return anr_array_remove_at(ds, index);
+}
+uint8_t anr_array_insert(void* ds, uint32_t index, void* ptr)
+{
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+	anr_array* arr = (anr_array*)ds;
+	if (index > arr->length) return 0;
+	if (index < 0) return 0;
+
+	if (arr->length >= arr->reserved)
+	{
+		arr->reserved += arr->reserve_size*arr->item_length;
+		arr->data = realloc(arr->data, arr->reserved);
+		ANRDATA_ASSERT(arr->data);
+	}
+
+	if (index == arr->length) return anr_array_add(ds, ptr);
+
+	uint32_t mem_to_move = (arr->length - index) * arr->item_length;
+	uint32_t mem_to_overwrite = (index+1) * arr->item_length;
+	uint32_t mem_to_copy = (index) * arr->item_length;
+	memmove(arr->data + mem_to_overwrite, arr->data + mem_to_copy, mem_to_move);
+	memcpy(arr->data + index*arr->item_length, ptr, arr->item_length);
+	arr->length++;
+	return 1;
+}
+uint32_t anr_array_length(void* ds)
+{
+	ANRDATA_ASSERT(ds);
+	anr_array* arr = (anr_array*)ds;
+	return arr->length;
+}
+anr_iter anr_array_iter_start(void* ds)
+{
+	ANRDATA_ASSERT(ds);
+	anr_iter iter;
+	iter.index = -1;
+	iter.data = NULL;
+	return iter;
+}
+uint8_t anr_array_iter_next(void* ds, anr_iter* iter)
+{
+	ANRDATA_ASSERT(ds);
+	iter->index++;
+	iter->data = anr_array_find_at(ds, iter->index);
+	return iter->data != NULL;
 }
 
 #endif // ANR_DATA_IMPLEMENTATION
