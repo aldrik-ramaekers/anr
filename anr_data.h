@@ -14,6 +14,7 @@ LICENSE
 #ifndef INCLUDE_ANR_DATA_H
 #define INCLUDE_ANR_DATA_H
 
+#include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -32,6 +33,11 @@ LICENSE
 #define ANRDATA_ASSERT(x) assert(x)
 #endif
 
+typedef enum
+{
+	ANR_DS_LINKEDLIST = 0,
+} anr_ds_type;
+
 typedef struct
 {
 	void* prev;
@@ -41,50 +47,198 @@ typedef struct
 
 typedef struct
 {
+	anr_ds_type ds_type;
 	anr_linked_list_node* first;
 	anr_linked_list_node* last;
 	uint32_t length;
 } anr_linked_list;
 
-/*
 typedef struct
 {
-	void (*find_at)(void*,uint32_t);
-} anr_ds;*/
+	uint32_t index;
+	void* data;
+	union
+	{
+		struct
+		{
+			anr_linked_list_node* node;
+		} ll;
+	};
+} anr_iter;
+
+typedef union
+{
+	anr_linked_list ds_ll;
+} anr_ds;
+
+typedef struct
+{
+	uint8_t 	(*add)(void* list, void* ptr);
+	void 		(*free)(void* list);
+	void 		(*print)(void* list);
+	void* 		(*find_at)(void*,uint32_t);
+	uint32_t 	(*find_by)(void* list, char* ptr);
+	uint8_t 	(*remove_at)(void* list, uint32_t index);
+	uint8_t 	(*remove_by)(void* list, void* ptr);
+	uint8_t 	(*insert)(void* list, uint32_t index, void* ptr);
+	uint32_t 	(*length)(void* list);
+	anr_iter 	(*iter_start)(void* ll);
+	uint8_t 	(*iter_next)(void* ll, anr_iter* iter);
+} anr_ds_table;
+
+typedef struct
+{
+	int type;
+	anr_ds_table* ds;
+} anr_ds_pair;
+
+// === linked list ===
+ANRDATADEF anr_linked_list 	anr_linked_list_create();
+ANRDATADEF uint8_t 			anr_linked_list_add(void* list, void* ptr);
+ANRDATADEF void 			anr_linked_list_free(void* list);
+ANRDATADEF void 			anr_linked_list_print(void* list);
+ANRDATADEF void* 			anr_linked_list_find_at(void* list, uint32_t index);
+ANRDATADEF uint32_t 		anr_linked_list_find_by(void* list, char* ptr);
+ANRDATADEF uint8_t 			anr_linked_list_remove_at(void* list, uint32_t index);
+ANRDATADEF uint8_t 			anr_linked_list_remove_by(void* list, void* ptr);
+ANRDATADEF uint8_t 			anr_linked_list_insert(void* list, uint32_t index, void* ptr);
+ANRDATADEF uint32_t 		anr_linked_list_length(void* list);
+ANRDATADEF anr_iter 		anr_linked_list_iter_start(void* list);
+ANRDATADEF uint8_t 			anr_linked_list_iter_next(void* list, anr_iter* iter);
+
+anr_ds_table _ds_ll = 
+{
+	anr_linked_list_add,
+	anr_linked_list_free,
+	anr_linked_list_print,
+	anr_linked_list_find_at,
+	anr_linked_list_find_by,
+	anr_linked_list_remove_at,
+	anr_linked_list_remove_by,
+	anr_linked_list_insert,
+	anr_linked_list_length,
+	anr_linked_list_iter_start,
+	anr_linked_list_iter_next,
+};
+
+anr_ds_pair _ds_arr[] = 
+{
+	{ANR_DS_LINKEDLIST, &_ds_ll},
+};
+
+#define ANR_DS_LINKED_LIST anr_linked_list_create()
+
+#define ANR_DS_ADD(__ds, __ptr) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->add((void*)__ds, __ptr)
+#define ANR_DS_FREE(__ds) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->free((void*)__ds)
+#define ANR_DS_PRINT(__ds) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->print((void*)__ds)
+#define ANR_DS_FIND_AT(__ds, __index) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->find_at((void*)__ds, __index)
+#define ANR_DS_FIND_BY(__ds, __ptr) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->find_by((void*)__ds, __ptr)
+#define ANR_DS_REMOVE_BY(__ds, __ptr) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->remove_by((void*)__ds, __ptr)
+#define ANR_DS_REMOVE_AT(__ds, __index) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->remove_at((void*)__ds, __index)
+#define ANR_DS_INSERT(__ds, __index, __ptr) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->insert((void*)__ds, __index, __ptr)
+#define ANR_DS_LENGTH(__ds) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->length((void*)__ds)
+#define ANR_DS_ITER_START(__ds) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->iter_start((void*)__ds)
+#define ANR_DS_ITER_NEXT(__ds, __iter) (_ds_arr[(int)(((anr_ds*)__ds)->ds_ll.ds_type)]).ds->iter_next((void*)__ds, __iter)
+
+#define ANR_ITERATE(__iter, __ds) \
+	anr_iter __iter = ANR_DS_ITER_START((void*)__ds); \
+	while (ANR_DS_ITER_NEXT((void*)__ds, &iter))
 
 #endif // INCLUDE_ANR_DATA_H
 
-// === linked list ===
-ANRDATADEF anr_linked_list 			anr_linked_list_create();
-ANRDATADEF anr_linked_list_node* 	anr_linked_list_add(anr_linked_list* list, void* ptr);
-ANRDATADEF void 					anr_linked_list_free(anr_linked_list* list);
-ANRDATADEF void 					anr_linked_list_print(anr_linked_list* list);
-ANRDATADEF void* 					anr_linked_list_find_at(anr_linked_list* list, uint32_t index);
-ANRDATADEF uint32_t 				anr_linked_list_find_by(anr_linked_list* list, char* ptr);
-ANRDATADEF uint8_t 					anr_linked_list_remove_by(anr_linked_list* list, void* ptr);
-ANRDATADEF uint8_t 					anr_linked_list_remove_at(anr_linked_list* list, uint32_t index);
-
-//anr_ds _ds_ll = { anr_linked_list_find_at };
-
-
-
 #ifdef ANR_DATA_IMPLEMENTATION
 
-void anr_linked_list_print(anr_linked_list* list)
+anr_linked_list prev_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
+anr_linked_list curr_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
+
+static void anr__print_diff()
 {
-	anr_linked_list_node* iter = list->first;
-	uint32_t count = 0;
-	printf("List %p has %d nodes, first: %p last: %p\n", list, list->length, list->first, list->last);
-	while (iter)
+	#define max(a,b) (((a) > (b)) ? (a) : (b))
+	#define gotox(x) printf("\033[%dC", (x))
+	#define moveup(y) printf("\033[%dA", y);
+	
+	int max_lines = max(prev_print.length, curr_print.length);
+	for (int i = 0; i < max_lines; i++)
 	{
-		printf("#%d %p prev: %p next: %p\n", count, iter, iter->prev, iter->next);
-		iter = iter->next;
-		count++;
-	} 
+		char* curr_line = (i < curr_print.length) ? ANR_DS_FIND_AT(&curr_print, i) : 0;
+		if (curr_line)
+		{
+			printf(curr_line);
+			if (i < prev_print.length) moveup(1);
+		}
+		
+		char* prev_line = (i < prev_print.length) ? ANR_DS_FIND_AT(&prev_print, i) : 0;
+		if (prev_line)
+		{
+			gotox(100);
+			int strl = strlen(prev_line);
+			for (int x = 0; x < strl; x++) {
+				char ch = prev_line[x];
+				char is_same = (curr_line == NULL) ? 1 : ((x < strlen(curr_line) ? (ch == curr_line[x]) : 0));
+				if (!is_same) printf("\033[0;31m%c\033[0m", ch);
+				else printf("%c", ch);
+			}
+		}
+	}
+	printf("\n");
+
+	// Next iteration.
+	ANR_DS_FREE(&prev_print);
+	prev_print = curr_print;
+	curr_print = (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
 }
 
-void anr_linked_list_free(anr_linked_list* list)
+void anr_linked_list_print(void* ll)
 {
+	
+	anr_linked_list* list = ll;
+	anr_linked_list_node* iter = list->first;
+	uint32_t count = 0;
+
+	char* buffer = malloc(200);
+	snprintf(buffer, 200, "List %p has %d nodes, first: %p last: %p\n", list, list->length, list->first, list->last);
+	ANR_DS_ADD(&curr_print, buffer);
+	while (iter)
+	{
+		char* buffer = malloc(200);
+		snprintf(buffer, 200, "#%d %p prev: %p next: %p\n", count, iter, iter->prev, iter->next);
+		ANR_DS_ADD(&curr_print, buffer);
+		iter = iter->next;
+		count++;
+	}
+
+	anr__print_diff();
+}
+
+uint32_t anr_linked_list_length(void* ll)
+{
+	anr_linked_list* list = ll;
+	return list->length;
+}
+
+anr_iter anr_linked_list_iter_start(void* ll)
+{
+	(void)ll;
+	anr_iter iter;
+	iter.ll.node = NULL;
+	iter.index = -1;
+	iter.data = NULL;
+	return iter;
+}
+
+uint8_t anr_linked_list_iter_next(void* ll, anr_iter* iter)
+{
+	anr_linked_list* list = ll;
+	if (iter->ll.node == NULL) iter->ll.node = list->first;
+	else iter->ll.node = iter->ll.node->next;
+	iter->index++;
+	iter->data = iter->ll.node != NULL ? iter->ll.node->data : 0;
+	return iter->ll.node != NULL;
+}
+
+void anr_linked_list_free(void* ll)
+{
+	anr_linked_list* list = ll;
 	anr_linked_list_node* iter = list->last;
 	anr_linked_list_node* last = iter;
 	while (iter)
@@ -97,8 +251,50 @@ void anr_linked_list_free(anr_linked_list* list)
 	free(last);
 }
 
-uint8_t anr_linked_list_remove_at(anr_linked_list* list, uint32_t index)
+uint8_t anr_linked_list_insert(void* ll, uint32_t index, void* ptr)
 {
+	anr_linked_list* list = ll;
+
+	anr_linked_list_node* iter = list->first;
+	uint32_t count = 0;
+	while (iter)
+	{
+		if (count == index) {
+			break;
+		}
+		iter = iter->next;
+		count++;
+	}
+
+	if (!iter) return 0; // out of bounds.
+
+	anr_linked_list_node* node = malloc(sizeof(anr_linked_list_node));
+	ANRDATA_ASSERT(node);
+	node->data = ptr;
+	node->prev = iter->prev;
+	node->next = iter;
+
+	if (count == 0) {
+		list->first = node;
+	}
+	if (count == list->length-1) {
+		list->last = node;
+	}
+
+	if (node->prev) {
+		((anr_linked_list_node*)(node->prev))->next = node;
+	}
+	if (node->next) {
+		((anr_linked_list_node*)(node->next))->prev = node;
+	}
+	list->length++;
+
+	return 1;
+}
+
+uint8_t anr_linked_list_remove_at(void* ll, uint32_t index)
+{
+	anr_linked_list* list = ll;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 	while (iter)
@@ -129,8 +325,9 @@ uint8_t anr_linked_list_remove_at(anr_linked_list* list, uint32_t index)
 	return 0;
 }
 
-uint8_t anr_linked_list_remove_by(anr_linked_list* list, void* ptr)
+uint8_t anr_linked_list_remove_by(void* ll, void* ptr)
 {
+	anr_linked_list* list = ll;
 	anr_linked_list_node* iter = list->first;
 	while (iter)
 	{
@@ -159,8 +356,9 @@ uint8_t anr_linked_list_remove_by(anr_linked_list* list, void* ptr)
 	return 0;
 }
 
-uint32_t anr_linked_list_find_by(anr_linked_list* list, char* ptr)
+uint32_t anr_linked_list_find_by(void* ll, char* ptr)
 {
+	anr_linked_list* list = ll;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 	while (iter)
@@ -172,8 +370,9 @@ uint32_t anr_linked_list_find_by(anr_linked_list* list, char* ptr)
 	return -1;
 }
 
-void* anr_linked_list_find_at(anr_linked_list* list, uint32_t index)
+void* anr_linked_list_find_at(void* ll, uint32_t index)
 {
+	anr_linked_list* list = ll;
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
 	while (iter)
@@ -187,11 +386,12 @@ void* anr_linked_list_find_at(anr_linked_list* list, uint32_t index)
 
 anr_linked_list anr_linked_list_create()
 {
-	return (anr_linked_list){0};
+	return (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0};
 }
 
-anr_linked_list_node* anr_linked_list_add(anr_linked_list* list, void* ptr)
+uint8_t anr_linked_list_add(void* ll, void* ptr)
 {
+	anr_linked_list* list = ll;
 	anr_linked_list_node* iter = list->first;
 	do
 	{
@@ -204,7 +404,7 @@ anr_linked_list_node* anr_linked_list_add(anr_linked_list* list, void* ptr)
 			iter == NULL ? (list->first = node) : (iter->next = node);
 			list->last = node;
 			list->length++;
-			return node;
+			return 1;
 		}
 
 		iter = iter->next;
