@@ -9,6 +9,7 @@ before you include this file in *one* C or C++ file to create the implementation
 
 The datastructures are almost completely interchangeable if you use the macros. See examples/test_data.c
 important differences:
+	- linked list stores ptr's, array copies data from ptr's.
 	- linked list finds data by comparing ptr's, array finds data by comparing memory.
 
 LICENSE
@@ -88,7 +89,7 @@ typedef union
 
 typedef struct
 {
-	uint8_t 	(*add)(void* ds, void* ptr);
+	uint8_t 	(*add)(void* ds, void* ptr); // returns 1 on success, 0 on fail
 	void 		(*free)(void* ds);
 	void 		(*print)(void* ds);
 	void* 		(*find_at)(void*,uint32_t); // returns data
@@ -217,7 +218,7 @@ static void anr__print_diff()
 		char* prev_line = (i < prev_print.length) ? ANR_DS_FIND_AT(&prev_print, i) : 0;
 		if (prev_line)
 		{
-			gotox(100);
+			gotox(85);
 			int strl = strlen(prev_line);
 			for (int x = 0; x < strl; x++) {
 				char ch = prev_line[x];
@@ -486,8 +487,8 @@ anr_array anr_array_create(uint32_t data_size, uint32_t reserve_count)
 	ANRDATA_ASSERT(reserve_count > 0);
 
 	anr_array arr = (anr_array){ANR_DS_DYNAMIC_ARRAY, .data = 0, .item_length = data_size, .length = 0, .reserve_size = reserve_count, .reserved = 0};
-	arr.reserved = data_size * reserve_count;
-	arr.data = malloc(arr.reserved);
+	arr.reserved = reserve_count;
+	arr.data = malloc(arr.reserved*data_size);
 	ANRDATA_ASSERT(arr.data);
 
 	return arr;
@@ -500,15 +501,15 @@ uint8_t anr_array_add(void* ds, void* ptr)
 
 	anr_array* arr = (anr_array*)ds;
 
-	if (arr->length >= arr->reserved)
+	arr->length++;
+	if (arr->reserved < arr->length)
 	{
-		arr->reserved += arr->reserve_size*arr->item_length;
-		arr->data = realloc(arr->data, arr->reserved);
+		arr->reserved += arr->reserve_size;
+		arr->data = realloc(arr->data, arr->reserved*arr->item_length);
 		ANRDATA_ASSERT(arr->data);
 	}
 
-	memcpy(arr->data + (arr->length * arr->item_length), ptr, arr->item_length);
-	arr->length++;
+	memcpy(arr->data + ((arr->length-1) * arr->item_length), ptr, arr->item_length);
 
 	return 1;
 }
@@ -615,8 +616,8 @@ uint8_t anr_array_insert(void* ds, uint32_t index, void* ptr)
 
 	if (arr->length >= arr->reserved)
 	{
-		arr->reserved += arr->reserve_size*arr->item_length;
-		arr->data = realloc(arr->data, arr->reserved);
+		arr->reserved += arr->reserve_size;
+		arr->data = realloc(arr->data, arr->reserved*arr->item_length);
 		ANRDATA_ASSERT(arr->data);
 	}
 

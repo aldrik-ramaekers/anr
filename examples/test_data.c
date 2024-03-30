@@ -1,4 +1,4 @@
-#define ANR_DATA_DEBUG
+//#define ANR_DATA_DEBUG
 #define ANR_DATA_IMPLEMENTATION
 #include "../anr_data.h"
 
@@ -75,13 +75,52 @@ void test_ds(anr_ds* list)
 	ANR_DS_FREE(list);
 }
 
+#define HASH_LENGTH 2048
+char* random_hash()
+{
+	char* rr = malloc(HASH_LENGTH);
+	for (int i = 0; i < HASH_LENGTH; i++)
+	{
+		rr[i] = rand() % 10;
+	}
+	return rr;
+}
+
+void rand_test(anr_ds* ds, char* hash)
+{
+	for (uint32_t i = 0; i < HASH_LENGTH; i++)
+	{
+		uint8_t ch = hash[i];
+		int rand_index = rand() % (ANR_DS_LENGTH(ds)+1)-1;
+		if (ch >= 0 && ch <= 5) ANR_DS_ADD(ds, rand_int());
+		if (ch == 6) ANR_DS_INSERT(ds, rand_index, rand_int());
+		if (ch == 7 || ch == 8) ANR_DS_REMOVE_AT(ds, rand_index);
+		if (ch == 9 && ANR_DS_LENGTH(ds) > rand_index) {
+			ANR_DS_REMOVE_BY(ds, ANR_DS_FIND_AT(ds, rand_index));
+		}
+	}
+	ANR_DS_PRINT(ds);
+}
+
 int main(int argc, char** argvv)
 {
 	anr_linked_list list = ANR_DS_LINKED_LIST;
 	test_ds((anr_ds*)&list);
 
-	anr_array array = ANR_DS_ARRAY(sizeof(int), 5);
+	anr_array array = ANR_DS_ARRAY(sizeof(int), 1);
 	test_ds((anr_ds*)&array);
+
+	for (int i = 0; i < 10; i++)
+	{
+		char* rand = random_hash();
+
+		list = ANR_DS_LINKED_LIST;
+		rand_test((anr_ds*)&list, rand);
+
+		array = ANR_DS_ARRAY(sizeof(int), 5);
+		rand_test((anr_ds*)&array, rand);
+		free(rand);
+	}
 
 	return 0;
 }
