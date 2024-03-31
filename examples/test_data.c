@@ -80,7 +80,7 @@ void test_ds(anr_ds* list)
 	ANR_DS_FREE(list);
 }
 
-#define HASH_LENGTH 2048
+#define HASH_LENGTH 20480
 char* random_hash()
 {
 	char* rr = malloc(HASH_LENGTH);
@@ -89,6 +89,27 @@ char* random_hash()
 		rr[i] = rand() % 10;
 	}
 	return rr;
+}
+
+#define ADD_REMOVE_COUNT 100000
+void add_remove_test(anr_ds* ds)
+{
+	clock_t t = clock();
+	for (uint32_t i = 0; i < ADD_REMOVE_COUNT; i++)
+	{
+		ANR_DS_ADD(ds, rand_int());
+	}
+	printf("-- add %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC);
+
+	t = clock();
+	for (uint32_t i = 0; i < ADD_REMOVE_COUNT; i++)
+	{
+		int rand_index = (rand() % (ANR_DS_LENGTH(ds)+1))-1;
+		ANR_DS_REMOVE_AT(ds, rand_index);
+	}
+	printf("-- remove %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+
+	ANR_DS_FREE(ds);
 }
 
 void rand_test(anr_ds* ds, char* hash)
@@ -108,7 +129,7 @@ void rand_test(anr_ds* ds, char* hash)
 	ANR_DS_FREE(ds);
 }
 
-#define TEST_LOOP 500
+#define TEST_LOOP 50
 int main(int argc, char** argvv)
 {
 	anr_linked_list list = ANR_DS_LINKED_LIST(sizeof(int));
@@ -121,6 +142,7 @@ int main(int argc, char** argvv)
 	test_ds((anr_ds*)&hashmap);
 
 	clock_t t = clock();
+
 	for (int i = 0; i < TEST_LOOP; i++)
 	{
 		char* rand = random_hash();
@@ -128,7 +150,7 @@ int main(int argc, char** argvv)
 		rand_test((anr_ds*)&list, rand);
 		free(rand);
 	}
-	printf("linked list took %fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+	printf("linked list fuzzing %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
 
 	t = clock();
 	for (int i = 0; i < TEST_LOOP; i++)
@@ -138,7 +160,7 @@ int main(int argc, char** argvv)
 		rand_test((anr_ds*)&array, rand);
 		free(rand);
 	}
-	printf("array took %fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+	printf("array fuzzing %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
 
 	t = clock();
 	for (int i = 0; i < TEST_LOOP; i++)
@@ -148,7 +170,45 @@ int main(int argc, char** argvv)
 		rand_test((anr_ds*)&hashmap, rand);
 		free(rand);
 	}
-	printf("hashmap took %fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+	printf("hashmap fuzzing %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+
+	t = clock();
+	list = ANR_DS_LINKED_LIST(sizeof(int));
+	add_remove_test((anr_ds*)&list);
+	printf("linkedlist addremove %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+
+	t = clock();
+	array = ANR_DS_ARRAY(sizeof(int), ADD_REMOVE_COUNT);
+	add_remove_test((anr_ds*)&array);
+	printf("array addremove %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
+
+	t = clock();
+	hashmap = ANR_DS_HASHMAP(sizeof(int), ADD_REMOVE_COUNT);
+	add_remove_test((anr_ds*)&hashmap);
+
+	printf("hashmap addremove %.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
 
 	return 0;
 }
+
+/*
+TEST RESULTS: 20480 hash length, 50 fuzzing loops, 100000 add random remove
+
+[v0.2]
+linked list fuzzing 	24.064s
+array fuzzing 			2.288s
+hashmap fuzzing 		16.501s
+
+-- add 					46.738s
+-- remove 				10.461s
+linkedlist addremove 	57.199s
+
+-- add 					0.003s
+-- remove 				1.325s
+array addremove 		1.329s
+
+-- add 					13.696s
+-- remove 				0.006s
+hashmap addremove 		13.703s
+
+*/
