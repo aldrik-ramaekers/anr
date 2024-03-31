@@ -63,15 +63,16 @@ typedef struct
 {
 	anr_ds_type ds_type;
 	void* data;
-	uint32_t data_size;
-	uint32_t reserve_size;
-	uint32_t reserved;
-	uint32_t length;
+	int32_t data_size;
+	int32_t reserve_size;
+	int32_t reserved;
+	int32_t length;
 } anr_array;
 
 typedef struct
 {
 	uint32_t bucket_start;
+	uint32_t length;
 	void* data;
 } anr_hashmap_bucket;
 
@@ -104,7 +105,7 @@ typedef union
 
 typedef struct
 {
-	uint32_t 	(*add)(void* ds, void* ptr); // returns index on success, 0 on fail
+	int32_t 	(*add)(void* ds, void* ptr); // returns index on success, -1 on fail
 	void 		(*free)(void* ds);
 	void 		(*print)(void* ds);
 	void* 		(*find_at)(void*,uint32_t); // returns data
@@ -125,7 +126,7 @@ typedef struct
 
 // === linked list ===
 ANRDATADEF anr_linked_list 	anr_linked_list_create(uint32_t data_size);
-ANRDATADEF uint32_t 		anr_linked_list_add(void* ds, void* ptr);
+ANRDATADEF int32_t	 		anr_linked_list_add(void* ds, void* ptr);
 ANRDATADEF void 			anr_linked_list_free(void* ds);
 ANRDATADEF void 			anr_linked_list_print(void* ds);
 ANRDATADEF void* 			anr_linked_list_find_at(void* ds, uint32_t index);
@@ -139,7 +140,7 @@ ANRDATADEF uint8_t 			anr_linked_list_iter_next(void* ds, anr_iter* iter);
 
 // === dynamic array ===
 ANRDATADEF anr_array 	anr_array_create(uint32_t data_size, uint32_t reserve_count);
-ANRDATADEF uint32_t 	anr_array_add(void* ds, void* ptr);
+ANRDATADEF int32_t 		anr_array_add(void* ds, void* ptr);
 ANRDATADEF void 		anr_array_free(void* ds);
 ANRDATADEF void 		anr_array_print(void* ds);
 ANRDATADEF void* 		anr_array_find_at(void* ds, uint32_t index);
@@ -153,7 +154,7 @@ ANRDATADEF uint8_t 		anr_array_iter_next(void* ds, anr_iter* iter);
 
 // === hashmap ===
 ANRDATADEF anr_hashmap 	anr_hashmap_create(uint32_t data_size, uint32_t bucket_size);
-ANRDATADEF uint32_t 	anr_hashmap_add(void* ds, void* ptr);
+ANRDATADEF int32_t	 	anr_hashmap_add(void* ds, void* ptr);
 ANRDATADEF void 		anr_hashmap_free(void* ds);
 ANRDATADEF void 		anr_hashmap_print(void* ds);
 ANRDATADEF void* 		anr_hashmap_find_at(void* ds, uint32_t index);
@@ -360,27 +361,41 @@ uint8_t anr_linked_list_insert(void* ds, uint32_t index, void* ptr)
 
 	anr_linked_list_node* iter = list->first;
 	uint32_t count = 0;
-	while (iter)
-	{
-		if (count == index) {
-			break;
+
+	anr_linked_list_node* prev = NULL;
+	anr_linked_list_node* next = NULL;
+
+	if (index == list->length) {
+		count = index;
+		prev = list->last;
+		next = NULL;
+	}
+	else {
+		while (iter)
+		{
+			if (count == index) {
+				break;
+			}
+			iter = iter->next;
+			count++;
 		}
-		iter = iter->next;
-		count++;
+
+		if (!iter) return 0; // out of bounds.
+
+		prev = iter->prev;
+		next = iter;
 	}
 
-	if (!iter) return 0; // out of bounds.
-
 	anr_linked_list_node* node = malloc(sizeof(anr_linked_list_node) + list->data_size - sizeof(void*));
-	ANRDATA_ASSERT(node);
+	if (!node) return 0;
 	memcpy(((uint8_t*)node)+offsetof(anr_linked_list_node, data), ptr, list->data_size);
-	node->prev = iter->prev;
-	node->next = iter;
+	node->prev = prev;
+	node->next = next;
 
 	if (count == 0) {
 		list->first = node;
 	}
-	if (count == list->length-1) {
+	if (count == list->length) {
 		list->last = node;
 	}
 
@@ -399,7 +414,8 @@ uint8_t anr_linked_list_remove_at(void* ds, uint32_t index)
 {
 	ANRDATA_ASSERT(ds);
 	anr_linked_list* list = ds;
-	anr_linked_list_node* iter = list->first;
+	uint8_t search_backwards = index > (list->length/2);
+	anr_linked_list_node* iter = search_backwards ? list->last : list->first;
 	uint32_t count = 0;
 	while (iter)
 	{
@@ -422,7 +438,7 @@ uint8_t anr_linked_list_remove_at(void* ds, uint32_t index)
 			list->length--;
 			return 1;
 		}
-		iter = iter->next;
+		iter = search_backwards ? iter->prev : iter->next;
 		count++;
 	}
 	return 0;
@@ -500,7 +516,7 @@ anr_linked_list anr_linked_list_create(uint32_t data_size)
 	return (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0, data_size};
 }
 
-uint32_t anr_linked_list_add(void* ds, void* ptr)
+int32_t anr_linked_list_add(void* ds, void* ptr)
 {
 	ANRDATA_ASSERT(ds);
 	ANRDATA_ASSERT(ptr);
@@ -510,7 +526,7 @@ uint32_t anr_linked_list_add(void* ds, void* ptr)
 	{
 		if (iter == NULL || iter->next == NULL) {
 			anr_linked_list_node* node = malloc(sizeof(anr_linked_list_node) + list->data_size - sizeof(void*));
-			ANRDATA_ASSERT(node);
+			if (!node) return -1;
 			memcpy(((uint8_t*)node)+offsetof(anr_linked_list_node, data), ptr, list->data_size);
 			node->prev = iter;
 			node->next = NULL;
@@ -524,7 +540,7 @@ uint32_t anr_linked_list_add(void* ds, void* ptr)
 	} while (iter);
 	
 	ANRDATA_ASSERT(0);
-	return 0;
+	return -1;
 }
 
 anr_array anr_array_create(uint32_t data_size, uint32_t reserve_count)
@@ -535,12 +551,16 @@ anr_array anr_array_create(uint32_t data_size, uint32_t reserve_count)
 	anr_array arr = (anr_array){ANR_DS_DYNAMIC_ARRAY, .data = 0, .data_size = data_size, .length = 0, .reserve_size = reserve_count, .reserved = 0};
 	arr.reserved = reserve_count;
 	arr.data = malloc(arr.reserved*data_size);
-	ANRDATA_ASSERT(arr.data);
+	if (!arr.data) {
+		arr.reserve_size = 1;
+		arr.data = malloc(arr.reserved*data_size); // Try again with smallest possible size.
+		ANRDATA_ASSERT(arr.data);
+	}
 
 	return arr;
 }
 
-uint32_t anr_array_add(void* ds, void* ptr)
+int32_t anr_array_add(void* ds, void* ptr)
 {
 	ANRDATA_ASSERT(ds);
 	ANRDATA_ASSERT(ptr);
@@ -551,8 +571,9 @@ uint32_t anr_array_add(void* ds, void* ptr)
 	if (arr->reserved < arr->length)
 	{
 		arr->reserved += arr->reserve_size;
-		arr->data = realloc(arr->data, arr->reserved*arr->data_size);
-		ANRDATA_ASSERT(arr->data);
+		void* b = realloc(arr->data, arr->reserved*arr->data_size);
+		if (b) arr->data = b;
+		else return -1;
 	}
 
 	memcpy(arr->data + ((arr->length-1) * arr->data_size), ptr, arr->data_size);
@@ -639,6 +660,12 @@ uint8_t anr_array_remove_at(void* ds, uint32_t index)
 	uint32_t mem_to_copy = (index+1) * arr->data_size;
 	memmove(arr->data + mem_to_overwrite, arr->data + mem_to_copy, mem_to_move);
 	arr->length--;
+
+	//if (arr->length < arr->reserved - (arr->reserve_size*2)) {
+	//	arr->reserved -= arr->reserve_size;
+	//	arr->data = realloc(arr->data, arr->reserved);
+	//	//if (b) arr->data = b;
+	//}
 	return 1;
 }
 
@@ -668,8 +695,9 @@ uint8_t anr_array_insert(void* ds, uint32_t index, void* ptr)
 	if (arr->length >= arr->reserved)
 	{
 		arr->reserved += arr->reserve_size;
-		arr->data = realloc(arr->data, arr->reserved*arr->data_size);
-		ANRDATA_ASSERT(arr->data);
+		void* b = realloc(arr->data, arr->reserved*arr->data_size);
+		if (b) arr->data = b;
+		else return 0;
 	}
 
 	if (index == arr->length) return anr_array_add(ds, ptr);
@@ -716,7 +744,7 @@ anr_hashmap anr_hashmap_create(uint32_t data_size, uint32_t bucket_size)
 	return hashmap;
 }
 
-uint32_t anr_hashmap_add(void* ds, void* ptr)
+int32_t anr_hashmap_add(void* ds, void* ptr)
 {
 	ANRDATA_ASSERT(ds);
 	ANRDATA_ASSERT(ptr);
@@ -735,6 +763,7 @@ uint32_t anr_hashmap_add(void* ds, void* ptr)
 			memcpy(data+1, ptr, hashmap->data_size);
 			data[0] = 1;
 			hashmap->length++;
+			bb->length++;
 			return bb->bucket_start + i;
 		}
 	}
@@ -744,6 +773,7 @@ uint32_t anr_hashmap_add(void* ds, void* ptr)
 	new_bucket.bucket_start = highest_bucket_start;
 	uint32_t alloc_size = (hashmap->bucket_size * hashmap->data_size) + hashmap->bucket_size;
 	new_bucket.data = malloc(alloc_size);
+	if (!new_bucket.data) return -1;
 	memset(new_bucket.data, 0, alloc_size);
 	uint32_t bucket_index = anr_array_add(&hashmap->buckets, &new_bucket);
 	anr_hashmap_bucket* bucket = anr_array_find_at(&hashmap->buckets, bucket_index);
@@ -842,6 +872,11 @@ uint8_t anr_hashmap_remove_at(void* ds, uint32_t index)
 			if (data[0] == 1) {
 				data[0] = 0;
 				hashmap->length--;
+				bb->length--;
+
+				if (bb->length == 0) {
+					ANR_DS_REMOVE_AT(&hashmap->buckets, iter.index);
+				}
 				return 1;
 			}
 		}
@@ -852,13 +887,9 @@ uint8_t anr_hashmap_remove_at(void* ds, uint32_t index)
 uint8_t anr_hashmap_remove_by(void* ds, void* ptr)
 {
 	ANRDATA_ASSERT(ds);
-	anr_hashmap* hashmap = (anr_hashmap*)ds;
 	uint32_t index = anr_hashmap_find_by(ds, ptr);
 	if (index == -1) return 0;
-
-	char* data = anr_hashmap_find_at(ds, index);
-	data[-1] = 0;
-	hashmap->length--;
+	anr_hashmap_remove_at(ds, index);
 	return 1;
 }
 
@@ -881,17 +912,21 @@ uint8_t anr_hashmap_insert(void* ds, uint32_t index, void* ptr)
 		}
 	}
 
-	// Bucket does not exist yet. create one.
-	anr_hashmap_bucket new_bucket;
-	new_bucket.bucket_start = bucket_start;
-	uint32_t alloc_size = (hashmap->bucket_size * hashmap->data_size) + hashmap->bucket_size;
-	new_bucket.data = malloc(alloc_size);
-	memset(new_bucket.data, 0, alloc_size);
-	uint32_t bucket_index = anr_array_add(&hashmap->buckets, &new_bucket);
-	bucket = anr_array_find_at(&hashmap->buckets, bucket_index);
+	if (!bucket) {
+		// Bucket does not exist yet. create one.
+		anr_hashmap_bucket new_bucket;
+		new_bucket.bucket_start = bucket_start;
+		uint32_t alloc_size = (hashmap->bucket_size * hashmap->data_size) + hashmap->bucket_size;
+		new_bucket.data = malloc(alloc_size);
+		if (!new_bucket.data) return 0;
+		memset(new_bucket.data, 0, alloc_size);
+		uint32_t bucket_index = anr_array_add(&hashmap->buckets, &new_bucket);
+		bucket = anr_array_find_at(&hashmap->buckets, bucket_index);
+	}
 
 	uint32_t item_size = hashmap->data_size + 1;
 	hashmap->length++;
+	bucket->length++;
 	char* data = bucket->data + (inner_index * item_size);
 	data[0] = 1;
 	memcpy(data+1, ptr, hashmap->data_size);
