@@ -1,11 +1,11 @@
 /*
-anr_data.h - v0.2 - public domain data structures library
+anr_data.h - v0.3 - public domain data structures library
 
 This is a single-header-file library that provides basic data structures
 
 Do this:
 	#ifdef ANR_DATA_IMPLEMENTATION
-before you include this file in *one* C or C++ file to create the implementation.
+before you include this file in *one* C file to create the implementation.
 
 The data structures are completely interchangeable if you use the macros. See examples/test_data.c
 
@@ -83,6 +83,8 @@ typedef struct
 	anr_array buckets;
 	uint32_t data_size;
 	uint32_t length;
+	int32_t last_emptied; // Index known to be empty. -1 if none.
+	int32_t next_empty; // Next empty index to append. -1 of none.
 } anr_hashmap;
 
 typedef struct
@@ -741,6 +743,8 @@ anr_hashmap anr_hashmap_create(uint32_t data_size, uint32_t bucket_size)
 	ANRDATA_ASSERT(bucket_size > 0);
 	anr_hashmap hashmap = (anr_hashmap){.ds_type = ANR_DS_HASHMAP, .bucket_size = bucket_size, .data_size = data_size};
 	hashmap.buckets = anr_array_create(sizeof(anr_hashmap_bucket), 1);
+	hashmap.last_emptied = -1;
+	hashmap.next_empty = -1;
 	return hashmap;
 }
 
@@ -750,6 +754,17 @@ int32_t anr_hashmap_add(void* ds, void* ptr)
 	ANRDATA_ASSERT(ptr);
 	anr_hashmap* hashmap = (anr_hashmap*)ds;
 	uint32_t item_size = hashmap->data_size + 1;
+
+	if (hashmap->last_emptied != -1) {
+		int32_t index = hashmap->last_emptied;
+		anr_hashmap_insert(ds, index, ptr);
+		return index;
+	}
+	if (hashmap->next_empty != -1) {
+		int32_t index = hashmap->next_empty;
+		anr_hashmap_insert(ds, index, ptr);
+		return index;
+	}
 
 	uint32_t highest_bucket_start = 0;
 	ANR_ITERATE(iter, &hashmap->buckets)
@@ -764,6 +779,14 @@ int32_t anr_hashmap_add(void* ds, void* ptr)
 			data[0] = 1;
 			hashmap->length++;
 			bb->length++;
+
+			// Check if next slot is empty.
+			int32_t next_index = i+1;
+			if (next_index < hashmap->bucket_size) {
+				char* data = bb->data + (next_index * item_size);
+				if (data[0] == 0) hashmap->next_empty = next_index;
+			}
+
 			return bb->bucket_start + i;
 		}
 	}
@@ -777,8 +800,9 @@ int32_t anr_hashmap_add(void* ds, void* ptr)
 	if (!new_bucket.data) return -1;
 	memset(new_bucket.data, 0, alloc_size);
 	uint32_t bucket_index = anr_array_add(&hashmap->buckets, &new_bucket);
+	if (bucket_index == -1) return -1;
 	anr_hashmap_bucket* bucket = anr_array_find_at(&hashmap->buckets, bucket_index);
-
+	hashmap->next_empty = new_bucket.bucket_start+1; // Bucket was just created so were sure its empty.
 	hashmap->length++;
 	char* data = bucket->data + (0 * item_size);
 	memcpy(data+1, ptr, hashmap->data_size);
@@ -874,6 +898,7 @@ uint8_t anr_hashmap_remove_at(void* ds, uint32_t index)
 				data[0] = 0;
 				hashmap->length--;
 				bb->length--;
+				hashmap->last_emptied = index;
 
 				if (bb->length == 0) {
 					ANR_DS_REMOVE_AT(&hashmap->buckets, iter.index);
@@ -903,6 +928,13 @@ uint8_t anr_hashmap_insert(void* ds, uint32_t index, void* ptr)
 	int bucket_start = (index / hashmap->bucket_size) * hashmap->bucket_size;
 	int inner_index = index % hashmap->bucket_size;
 
+	if (hashmap->last_emptied == index) {
+		hashmap->last_emptied = -1;
+	}
+	if (hashmap->next_empty == index) {
+		hashmap->next_empty = -1;
+	}
+
 	anr_hashmap_bucket* bucket = NULL;
 	ANR_ITERATE(iter, &hashmap->buckets)
 	{
@@ -922,7 +954,8 @@ uint8_t anr_hashmap_insert(void* ds, uint32_t index, void* ptr)
 		new_bucket.data = malloc(alloc_size);
 		if (!new_bucket.data) return 0;
 		memset(new_bucket.data, 0, alloc_size);
-		uint32_t bucket_index = anr_array_add(&hashmap->buckets, &new_bucket);
+		int32_t bucket_index = anr_array_add(&hashmap->buckets, &new_bucket);
+		if (bucket_index == -1) return 0;
 		bucket = anr_array_find_at(&hashmap->buckets, bucket_index);
 	}
 

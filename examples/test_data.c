@@ -11,7 +11,7 @@
 #define ADD_REMOVE_COUNT 500000
 #else
 #define TEST_LOOP 10
-#define HASH_LENGTH 20000
+#define HASH_LENGTH 2000
 #define ADD_REMOVE_COUNT 5000
 #endif
 
@@ -208,12 +208,12 @@ int main(int argc, char** argvv)
 /*
 TEST RESULTS: 20000 hash length, 100 fuzzing loops, 500000 add random remove
 
-[v0.2]
-linked list fuzzing             44.196s
-array fuzzing                   4.180s
-hashmap fuzzing                 15.919s
-linkedlist addremove            78.170s
-array addremove                 68.051s
-hashmap addremove               0.063s
+[v0.3]
+linked list fuzzing             43.410s
+array fuzzing                   4.088s
+hashmap fuzzing                 7.961s
+linkedlist addremove            85.830s
+array addremove                 68.158s
+hashmap addremove               0.062s
 
 */

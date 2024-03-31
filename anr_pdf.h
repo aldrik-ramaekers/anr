@@ -5,7 +5,7 @@ This is a single-header-file library for writing pdf files.
 
 Do this:
 	#ifdef ANR_PDF_IMPLEMENTATION
-before you include this file in *one* C or C++ file to create the implementation.
+before you include this file in *one* C file to create the implementation.
 
 QUICK NOTES:
 	Primarily of interest to developers making word processors.
