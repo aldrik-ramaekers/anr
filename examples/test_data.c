@@ -10,8 +10,8 @@
 #define HASH_LENGTH 20000
 #define ADD_REMOVE_COUNT 500000
 #else
-#define TEST_LOOP 1
-#define HASH_LENGTH 200
+#define TEST_LOOP 10
+#define HASH_LENGTH 20000
 #define ADD_REMOVE_COUNT 5000
 #endif
 
@@ -161,7 +161,7 @@ int main(int argc, char** argvv)
 	{
 		char* rand = random_hash();
 		list = ANR_DS_LINKED_LIST(sizeof(int));
-		//rand_test((anr_ds*)&list, rand);
+		rand_test((anr_ds*)&list, rand);
 		free(rand);
 	}
 	printf("linked list fuzzing 		%.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 
@@ -181,7 +181,7 @@ int main(int argc, char** argvv)
 	{
 		char* rand = random_hash();
 		hashmap = ANR_DS_HASHMAP(sizeof(int), 20);
-		//rand_test((anr_ds*)&hashmap, rand);
+		rand_test((anr_ds*)&hashmap, rand);
 		free(rand);
 	}
 	printf("hashmap fuzzing 		%.3fs\n", ((double)(clock() - t))/CLOCKS_PER_SEC); 

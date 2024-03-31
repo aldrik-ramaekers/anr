@@ -661,11 +661,11 @@ uint8_t anr_array_remove_at(void* ds, uint32_t index)
 	memmove(arr->data + mem_to_overwrite, arr->data + mem_to_copy, mem_to_move);
 	arr->length--;
 
-	//if (arr->length < arr->reserved - (arr->reserve_size*2)) {
-	//	arr->reserved -= arr->reserve_size;
-	//	arr->data = realloc(arr->data, arr->reserved);
-	//	//if (b) arr->data = b;
-	//}
+	if (arr->length < arr->reserved / 2) {
+		arr->reserved /= 2;
+		void* b = realloc(arr->data, arr->reserved*arr->data_size);
+		if (b) arr->data = b;
+	}
 	return 1;
 }
 
@@ -771,6 +771,7 @@ int32_t anr_hashmap_add(void* ds, void* ptr)
 	// All buckets are full, create new one.
 	anr_hashmap_bucket new_bucket;
 	new_bucket.bucket_start = highest_bucket_start;
+	new_bucket.length = 0;
 	uint32_t alloc_size = (hashmap->bucket_size * hashmap->data_size) + hashmap->bucket_size;
 	new_bucket.data = malloc(alloc_size);
 	if (!new_bucket.data) return -1;
@@ -916,6 +917,7 @@ uint8_t anr_hashmap_insert(void* ds, uint32_t index, void* ptr)
 		// Bucket does not exist yet. create one.
 		anr_hashmap_bucket new_bucket;
 		new_bucket.bucket_start = bucket_start;
+		new_bucket.length = 0;
 		uint32_t alloc_size = (hashmap->bucket_size * hashmap->data_size) + hashmap->bucket_size;
 		new_bucket.data = malloc(alloc_size);
 		if (!new_bucket.data) return 0;
