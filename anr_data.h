@@ -1,5 +1,5 @@
 /*
-anr_data.h - v0.3 - public domain data structures library
+anr_data.h - v0.4 - public domain data structures library
 
 This is a single-header-file library that provides basic data structures
 
@@ -25,7 +25,7 @@ DOCUMENTATION
 		Returns index of first match of data.
 
 	ANR_DS_REMOVE_BY
-		Remove first entry that matches data.
+		Remove entry given the data ptr. Data ptr is assumed to exist in ds.
 
 	ANR_DS_REMOVE_AT
 		Remove data at index.
@@ -484,33 +484,27 @@ uint8_t anr_linked_list_remove_by(void* ds, void* ptr)
 {
 	ANRDATA_ASSERT(ds);
 	ANRDATA_ASSERT(ptr);
+
 	anr_linked_list* list = ds;
-	anr_linked_list_node* iter = list->first;
-	while (iter)
-	{
-		void* data = ((uint8_t*)iter)+offsetof(anr_linked_list_node, data);
-		if (memcmp(data, ptr, list->data_size) == 0) {
-			if (iter == list->first) {
-				list->first = iter->next;
-			}
-			if (iter == list->last) {
-				list->last = iter->prev;
-			}
+	anr_linked_list_node* iter = ptr - (offsetof(anr_linked_list_node, data));
 
-			if (iter->prev) {
-				((anr_linked_list_node*)(iter->prev))->next = iter->next;
-			}
-			if (iter->next) {
-				((anr_linked_list_node*)(iter->next))->prev = iter->prev;
-			}
-
-			free(iter);
-			list->length--;
-			return 1;
-		}
-		iter = iter->next;
+	if (iter == list->first) {
+		list->first = iter->next;
 	}
-	return 0;
+	if (iter == list->last) {
+		list->last = iter->prev;
+	}
+
+	if (iter->prev) {
+		((anr_linked_list_node*)(iter->prev))->next = iter->next;
+	}
+	if (iter->next) {
+		((anr_linked_list_node*)(iter->next))->prev = iter->prev;
+	}
+
+	free(iter);
+	list->length--;
+	return 1;
 }
 
 uint32_t anr_linked_list_find_by(void* ds, char* ptr)
@@ -707,10 +701,11 @@ uint8_t anr_array_remove_at(void* ds, uint32_t index)
 
 uint8_t anr_array_remove_by(void* ds, void* ptr)
 {
-	uint32_t index = anr_array_find_by(ds, ptr);
-	if (index == -1) return 0;
-
+	ANRDATA_ASSERT(ds);
+	ANRDATA_ASSERT(ptr);
+	
 	anr_array* arr = (anr_array*)ds;
+	uint32_t index = (ptr - arr->data) / arr->data_size;
 
 	if (index == arr->length-1) {
 		arr->length--;
@@ -947,10 +942,23 @@ uint8_t anr_hashmap_remove_at(void* ds, uint32_t index)
 uint8_t anr_hashmap_remove_by(void* ds, void* ptr)
 {
 	ANRDATA_ASSERT(ds);
-	uint32_t index = anr_hashmap_find_by(ds, ptr);
-	if (index == -1) return 0;
-	anr_hashmap_remove_at(ds, index);
-	return 1;
+	if (!ptr) return 0;
+	anr_hashmap* hashmap = (anr_hashmap*)ds;
+	uint32_t item_size = hashmap->data_size + 1;
+
+	ANR_ITERATE(iter, &hashmap->buckets)
+	{
+		anr_hashmap_bucket* bb = (anr_hashmap_bucket*)iter.data;
+		void* bucket_start = bb->data;
+		void* bucket_end = bb->data + (hashmap->bucket_size*item_size);
+
+		if (ptr >= bucket_start && ptr <= bucket_end)
+		{
+			return anr_hashmap_remove_at(ds, bb->bucket_start + ((ptr - bucket_start) / item_size));
+		}
+	}
+
+	return 0;
 }
 
 uint8_t anr_hashmap_insert(void* ds, uint32_t index, void* ptr)
