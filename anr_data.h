@@ -91,6 +91,13 @@ typedef struct
 	anr_linked_list_node* last;
 	uint32_t length;
 	uint32_t data_size;
+
+	struct // Cache last accessed node.
+	{
+		anr_linked_list_node* node;
+		uint32_t index;
+	} last_access;
+	
 } anr_linked_list;
 
 typedef struct
@@ -400,6 +407,8 @@ uint8_t anr_linked_list_insert(void* ds, uint32_t index, void* ptr)
 
 	anr_linked_list_node* prev = NULL;
 	anr_linked_list_node* next = NULL;
+	list->last_access.index = 0;
+	list->last_access.node = 0;
 
 	if (index == list->length) {
 		count = index;
@@ -428,6 +437,9 @@ uint8_t anr_linked_list_insert(void* ds, uint32_t index, void* ptr)
 	node->prev = prev;
 	node->next = next;
 
+	list->last_access.index = index;
+	list->last_access.node = node;
+
 	if (count == 0) {
 		list->first = node;
 	}
@@ -449,35 +461,17 @@ uint8_t anr_linked_list_insert(void* ds, uint32_t index, void* ptr)
 uint8_t anr_linked_list_remove_at(void* ds, uint32_t index)
 {
 	ANRDATA_ASSERT(ds);
+	void* ptr = anr_linked_list_find_at(ds, index);
+	if (!ptr) return 0;
+
 	anr_linked_list* list = ds;
-	uint8_t search_backwards = index > (list->length/2);
-	anr_linked_list_node* iter = search_backwards ? list->last : list->first;
-	uint32_t count = 0;
-	while (iter)
-	{
-		if (count == index) {
-			if (iter == list->first) {
-				list->first = iter->next;
-			}
-			if (iter == list->last) {
-				list->last = iter->prev;
-			}
+	anr_linked_list_node* iter = ptr - (offsetof(anr_linked_list_node, data));
+	iter = iter->prev;
 
-			if (iter->prev) {
-				((anr_linked_list_node*)(iter->prev))->next = iter->next;
-			}
-			if (iter->next) {
-				((anr_linked_list_node*)(iter->next))->prev = iter->prev;
-			}
-
-			free(iter);
-			list->length--;
-			return 1;
-		}
-		iter = search_backwards ? iter->prev : iter->next;
-		count++;
-	}
-	return 0;
+	uint8_t result = anr_linked_list_remove_by(ds, ptr);
+	list->last_access.index = index-1;
+	list->last_access.node = iter;
+	return result;
 }
 
 uint8_t anr_linked_list_remove_by(void* ds, void* ptr)
@@ -487,6 +481,8 @@ uint8_t anr_linked_list_remove_by(void* ds, void* ptr)
 
 	anr_linked_list* list = ds;
 	anr_linked_list_node* iter = ptr - (offsetof(anr_linked_list_node, data));
+	list->last_access.index = 0;
+	list->last_access.node = 0;
 
 	if (iter == list->first) {
 		list->first = iter->next;
@@ -530,24 +526,53 @@ void* anr_linked_list_find_at(void* ds, uint32_t index)
 {
 	ANRDATA_ASSERT(ds);
 	anr_linked_list* list = ds;
-	anr_linked_list_node* iter = list->first;
-	uint32_t count = 0;
+
+		typedef struct
+	{
+		anr_linked_list_node* node;
+		uint32_t index;
+	} possible_start;
+
+	possible_start waypoints[3] = { 
+		(possible_start){list->first, 0}, 
+		(possible_start){list->last_access.node, list->last_access.index}, 
+		(possible_start){list->last, list->length-1} 
+	};
+
+	uint32_t closest_waypoint = 0;
+	uint32_t closest_dist = UINT32_MAX;
+	uint32_t closest_index = 0;
+	for (int i = 0; i < 3; i++) {
+		if (waypoints[i].node) {
+			if (abs(waypoints[i].index - index) < closest_dist) {
+				closest_index = waypoints[i].index;
+				closest_waypoint = i;
+				closest_dist = abs(waypoints[i].index - index);
+			}
+		}
+	}
+
+	uint8_t search_backwards = closest_index > index;
+	anr_linked_list_node* iter = waypoints[closest_waypoint].node;
+	uint32_t count = closest_index;
+
 	while (iter)
 	{
 		if (count == index) return ((uint8_t*)iter)+offsetof(anr_linked_list_node, data);
-		count++;
-		iter = iter->next;
+		iter = search_backwards ? iter->prev : iter->next;
+		search_backwards ? count-- : count++;
 	}
 	return 0;
 }
 
 anr_linked_list anr_linked_list_create(uint32_t data_size)
 {
-	return (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0, data_size};
+	return (anr_linked_list){ANR_DS_LINKEDLIST, 0, 0, 0, data_size, {0}};
 }
 
 int32_t anr_linked_list_add(void* ds, void* ptr)
 {
+	// We dont need to iterate here..
 	ANRDATA_ASSERT(ds);
 	ANRDATA_ASSERT(ptr);
 	anr_linked_list* list = ds;
