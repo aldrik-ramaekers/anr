@@ -9,9 +9,43 @@ before you include this file in *one* C file to create the implementation.
 
 The data structures are completely interchangeable if you use the macros. See examples/test_data.c
 
+DOCUMENTATION
+
+	ANR_DS_ADD
+		array, linked list: append to end of ds.
+		hashmap: insert at any open slot.
+
+	ANR_DS_PRINT
+		print entries. define ANR_DATA_DEBUG to see diff with previous print.
+
+	ANR_DS_FIND_AT
+		Returns data at index.
+
+	ANR_DS_FIND_BY
+		Returns index of first match of data.
+
+	ANR_DS_REMOVE_BY
+		Remove first entry that matches data.
+
+	ANR_DS_REMOVE_AT
+		Remove data at index.
+
+	ANR_DS_INSERT
+		array, linked list: Insert at index and move up existing data. Index needs to be <= ds.length
+		hashmap: Insert data at index, replaces existing data. Index needs to be >= 0 and < UINT32_MAX
+
+	ANR_DS_LENGTH
+		Return number of entries in ds.
+
+	ANR_ITERATE
+		Iterate over ds, given anr_iter .index and .data entries are filled.
+	
+	ANR_DS_FREE
+		Free memory, dont use ds after this.
+
 LICENSE
 	See end of file for license information.
-	
+
 */
 #ifndef INCLUDE_ANR_DATA_H
 #define INCLUDE_ANR_DATA_H

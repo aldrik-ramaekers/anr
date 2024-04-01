@@ -1,18 +1,18 @@
 #define ANR_DATA_DEBUG
-//#define ANR_DATA_FULL_TEST_REPORT
+#define ANR_DATA_FULL_TEST_REPORT
 #define ANR_DATA_IMPLEMENTATION
 #include "../anr_data.h"
 
 #include <time.h>
 
-#if 1
+#if 0
 #define TEST_LOOP 100
 #define HASH_LENGTH 20000
 #define ADD_REMOVE_COUNT 500000
 #else
-#define TEST_LOOP 10
+#define TEST_LOOP 1000
 #define HASH_LENGTH 2000
-#define ADD_REMOVE_COUNT 5000
+#define ADD_REMOVE_COUNT 50000
 #endif
 
 int intptr;
@@ -208,12 +208,12 @@ int main(int argc, char** argvv)
 /*
 TEST RESULTS: 20000 hash length, 100 fuzzing loops, 500000 add random remove
 
-[v0.3]
-linked list fuzzing             43.410s
-array fuzzing                   4.088s
-hashmap fuzzing                 7.961s
-linkedlist addremove            85.830s
-array addremove                 68.158s
-hashmap addremove               0.062s
+[v0.3] i7 4770
+linked list fuzzing             38.548s
+array fuzzing                   3.086s
+hashmap fuzzing                 6.475s
+linkedlist addremove            70.672s
+array addremove                 60.854s
+hashmap addremove               0.053s
 
 */
