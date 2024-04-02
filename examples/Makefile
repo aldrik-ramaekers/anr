@@ -14,3 +14,6 @@ pdf:
 	gcc -g -Wall test_pdf.c -o bin/test_pdf$(EXTENSION)
 	./bin/test_pdf$(EXTENSION)
 	qpdf$(EXTENSION) --check bin/test_pdf.pdf
+sc:
+	gcc -g -Wall test_sc.c -o bin/anr_sc$(EXTENSION)
+	./bin/anr_sc$(EXTENSION)
