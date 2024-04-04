@@ -41,7 +41,8 @@ typedef enum
 {
 	ANR_SC_BLOCK_RAW = 0,
 	ANR_SC_BLOCK_COMPRESSED = 1,
-	ANR_SC_BLOCK_REPEAT = 2,
+	ANR_SC_BLOCK_PATTERN = 2,
+	ANR_SC_BLOCK_REFERENCE = 3,
 } anr_sc_block_type;
 
 /*
@@ -52,30 +53,22 @@ byte 0: 0 = compressed, 1 = raw
 file blocks:
 raw block: 2 - 63 bytes.
 compressed block: 2 bytes.
-2 pair repeat block: 5 bytes.
+2 pair pattern block: 5 bytes.
+reference block: 2 - n bytes.
 
 after byte 1:
-bit 0-1 = 0 = raw, 1 = compressed 2 = repeated
+bit 0-1 = 0 = raw, 1 = compressed 2 = pattern, 3 = reference
 bit 1-7 = count (max 63)
 
 if raw: copy count number of bytes.
 if compressed: repeat second byte count number of times.
-if repeated: byte 1,3 = repeat count, byte 2,4 = repeat data, count = how many times to repeat cycle.
+if patterned: byte 1,3 = pattern count, byte 2,4 = pattern data, count = how many times to repeat cycle.
 
 DEFLATE STEP 1: compress all bytes.
-DEFLATE STEP 2: find repeating blocks.
+DEFLATE STEP 2: find pattern blocks.
+DEFLATE STEP 3: make raw blocks.
+DEFLATE STEP 4: find references.
 */
-
-#define BYTE_TO_BINARY_PATTERN "%c%c%c%c%c%c%c%c"
-#define BYTE_TO_BINARY(byte)  \
-  ((byte) & 0x80 ? '1' : '0'), \
-  ((byte) & 0x40 ? '1' : '0'), \
-  ((byte) & 0x20 ? '1' : '0'), \
-  ((byte) & 0x10 ? '1' : '0'), \
-  ((byte) & 0x08 ? '1' : '0'), \
-  ((byte) & 0x04 ? '1' : '0'), \
-  ((byte) & 0x02 ? '1' : '0'), \
-  ((byte) & 0x01 ? '1' : '0') 
 
 ANRSCDEF void* anr_sc_deflate(void* data, uint32_t length, uint32_t* out_length);
 
@@ -88,6 +81,7 @@ static uint32_t anr_sc_deflate_step_1(void* data, uint32_t length, uint8_t* buff
 	uint8_t* src = (uint8_t*)data;
 	uint8_t cmp = 0;
 	uint8_t count = 0;
+
 	for (int i = 0; i < length; i++)
 	{
 		uint8_t val = src[i];
@@ -124,10 +118,9 @@ static uint32_t anr_sc_deflate_step_2(void* data, uint32_t length, uint8_t* buff
 		uint8_t count = buffer[i];
 		//uint8_t val = buffer[i+1];
 		uint8_t type = count>>6;
-		//printf("%d %d\n", count&0x3F, val);
+		//printf("\n%d %d", count&0x3F, val);
 		ANRSC_ASSERT(type == ANR_SC_BLOCK_COMPRESSED);
 		count &= 0x3F;
-
 
 		uint8_t pair1_count = 0;
 		uint8_t pair1_val = 0;
@@ -156,9 +149,9 @@ static uint32_t anr_sc_deflate_step_2(void* data, uint32_t length, uint8_t* buff
 			{
 				pair_count++;
 
-				if (pair_count <= 63) // max number per block.
+				if (pair_count < 63) // max number per block.
 				{
-					if (x+1 < cursor)
+					if (x+4 < cursor)
 						continue;
 				}
 			}
@@ -167,7 +160,7 @@ static uint32_t anr_sc_deflate_step_2(void* data, uint32_t length, uint8_t* buff
 				// Insert pair into current block.
 				uint32_t saved_space = pair_count*4;
 				buffer[i] = pair_count;
-				buffer[i] |= (ANR_SC_BLOCK_REPEAT<<6);
+				buffer[i] |= (ANR_SC_BLOCK_PATTERN<<6);
 				buffer[i+1] = pair1_count;
 				buffer[i+2] = pair1_val;
 				buffer[i+3] = pair2_count;
@@ -180,19 +173,203 @@ static uint32_t anr_sc_deflate_step_2(void* data, uint32_t length, uint8_t* buff
 				cursor -= saved_space;
 				cursor += 5;
 
-				//printf("Found pair! count: %d, saved: %d [%d %d %d %d]\n", pair_count, saved_space, pair1_count, pair1_val, pair2_count, pair2_val);
+				//printf("\nFound pair! count: %d, saved: %d [%d %d %d %d]\n", pair_count, saved_space, pair1_count, pair1_val, pair2_count, pair2_val);
 
 				i += 3;
 			}
 			break;
 		}
-		
-		//printf("%d %d\n", buffer[i-12], buffer[i-10]);
-
-		//printf("%d %d\n", count&0x3F, val);
 	}
 
 	return cursor;
+}
+
+static uint32_t anr_sc_deflate_step_3(void* data, uint32_t length, uint8_t* buffer, uint32_t cursor)
+{
+	int singles_count = 0;
+	uint32_t index_start = 0;
+	for (uint32_t i = 1; i < cursor; i+=2)
+	{
+		uint8_t count = buffer[i];
+		//uint8_t val = buffer[i+1];
+		uint8_t type = count>>6;
+		
+		if (type == ANR_SC_BLOCK_PATTERN) {
+			i += 3;
+			goto append_raw;
+		}
+		//printf("\n#%d %d %d %d", i, type, count&0x3F, val);
+		ANRSC_ASSERT(type == ANR_SC_BLOCK_COMPRESSED);
+		count &= 0x3F;
+
+
+		if (count == 1) 
+		{
+			if (singles_count == 0) index_start = i;
+			singles_count++;
+
+			if (singles_count < 63 && i+2 < cursor) // max number per block.
+				continue;
+		}
+
+append_raw:
+		if (singles_count >= 2) // Need atleast 2 blocks for this to pay off.
+		{
+			for (int x = 0; x < singles_count; x++) 
+				buffer[index_start+x+1] = buffer[index_start+(x*2-1)];
+
+			buffer[index_start] = singles_count;
+			buffer[index_start] |= (ANR_SC_BLOCK_RAW<<6);
+
+			uint32_t space_written = (singles_count+1);
+			uint32_t space_saved = (singles_count*2)-space_written;
+			uint32_t copy_from = index_start+space_written+space_saved;
+			
+			memmove(buffer+index_start+space_written, buffer+copy_from, cursor-copy_from); // TODO Dont do this.
+			i = index_start+space_written-2;
+			//printf("\nInserted raw written: %d, index: %d\n", space_written, index_start);
+			singles_count = 0;
+
+			cursor -= space_saved;
+		}
+
+		singles_count = 0;
+	}
+
+	return cursor;
+}
+
+static int32_t anr_sc_find_raw_match(uint8_t* buffer, uint32_t cursor, uint32_t cmp_index, uint32_t cmp_length, uint32_t upto)
+{
+	for (uint32_t i = 1; i < upto;i+=0)
+	{
+		uint8_t count = buffer[i];
+		//uint8_t val = buffer[i+1];
+		uint8_t type = count>>6;
+		
+		if (type == ANR_SC_BLOCK_PATTERN) {
+			i += 5;
+		}
+		else if (type == ANR_SC_BLOCK_RAW) {
+			count &= 0x3f;
+
+			if (count > 3 && count == cmp_length && memcmp(buffer+i, buffer+cmp_index, count+1) == 0) {
+				printf("\nMatch length: %d, #%d and #%d\n", count, i, cmp_index);
+				for (int x = 0; x < count+1; x++)
+				{
+					printf("\n %d %d", buffer[i+x], buffer[cmp_index+x]);
+				}
+				printf("\n");
+				return i;
+			}
+
+			i += count+1;
+		}
+		else if (type == ANR_SC_BLOCK_COMPRESSED) {
+			i += 2;
+		}
+		else if (type == ANR_SC_BLOCK_REFERENCE) {
+			count &= 0x3f;
+			i += count+1;
+		}
+	}
+
+	return -1;
+}
+
+static uint32_t anr_sc_deflate_step_4(void* data, uint32_t length, uint8_t* buffer, uint32_t cursor)
+{
+	for (uint32_t i = 1; i < cursor;i+=0)
+	{
+		uint8_t count = buffer[i];
+		uint8_t val = buffer[i+1];
+		uint8_t type = count>>6;
+		
+		if (type == ANR_SC_BLOCK_PATTERN) {
+			i += 5;
+		}
+		else if (type == ANR_SC_BLOCK_RAW) {
+			count &= 0x3f;
+
+			uint32_t old_count = count + 1; // Length if this block.
+
+			int32_t match = anr_sc_find_raw_match(buffer, cursor, i, count, i-1);
+			uint8_t length_of_match = 0;
+			if (match > 0)
+			{
+				if (val < 0x10000) {
+					if (val < 0x100) length_of_match = 1;
+					else length_of_match = 2;
+				} else {
+					if (val < 0x100000000L) length_of_match = 3;
+					else length_of_match = 4;
+				}
+
+				uint32_t new_count = length_of_match+1;
+
+				// Turn raw block into reference to matching block.
+				buffer[i] = length_of_match;
+				buffer[i] |= (ANR_SC_BLOCK_REFERENCE<<6);
+
+				for (int t = 0; t < length_of_match; t++)
+				{
+					buffer[i+1+t] = ((uint8_t*)&match)[3-t];
+				}
+
+				memmove(buffer+i+new_count, buffer+i+old_count, cursor-i-old_count);
+				cursor -= old_count;
+				cursor += new_count;
+				i += new_count;
+			}
+			else
+			{
+				i += count+1;
+			}
+		}
+		else if (type == ANR_SC_BLOCK_COMPRESSED) {
+			i += 2;
+		}
+		else
+		{
+			ANRSC_ASSERT(0);
+		}
+	}
+
+	return cursor;
+}
+
+static void anr_sc_print(uint8_t* buffer, uint32_t cursor)
+{
+	for (int x = 0; x < cursor; x++)
+	{
+		//printf("\n %d %d", buffer[x], buffer[x]);
+	}
+
+	for (uint32_t i = 1; i < cursor;i+=0)
+	{
+		uint8_t count = buffer[i];
+		uint8_t val = buffer[i+1];
+		uint8_t type = count>>6;
+		
+		if (type == ANR_SC_BLOCK_PATTERN) {
+			printf("pattern\n");
+			i += 5;
+		}
+		else if (type == ANR_SC_BLOCK_RAW) {
+			count &= 0x3f;
+			printf("raw: %d\n", count&0x3f);
+			i += count+1;
+		}
+		else if (type == ANR_SC_BLOCK_REFERENCE) {
+			count &= 0x3f;
+			printf("reference: length: %d\n", count&0x3f);
+			i += count+1;
+		}
+		else if (type == ANR_SC_BLOCK_COMPRESSED) {
+			printf("compressed: %d %d\n", count&0x3f, val);
+			i += 2;
+		}
+	}
 }
 
 void* anr_sc_deflate(void* data, uint32_t length, uint32_t* out_length)
@@ -205,17 +382,15 @@ void* anr_sc_deflate(void* data, uint32_t length, uint32_t* out_length)
 	write_cursor++;
 
 	write_cursor = anr_sc_deflate_step_1(data, length, final_stream, write_cursor);
-	printf("Step 1: Compress: %d -> %d (%.1f%%)", length, write_cursor, length/(float)write_cursor*100.0f);
+	printf(" Step 1: %d -> (%.1f%%)", length, (float)write_cursor/length*100.0f);
 	write_cursor = anr_sc_deflate_step_2(data, length, final_stream, write_cursor);
-	printf(" Step 2: -> %d (%.1f%%)\n", write_cursor, length/(float)write_cursor*100.0f);
+	printf(" Step 2: -> (%.1f%%)", (float)write_cursor/length*100.0f);
+	write_cursor = anr_sc_deflate_step_3(data, length, final_stream, write_cursor);
+	printf(" Step 3: -> (%.1f%%)", (float)write_cursor/length*100.0f);
+	write_cursor = anr_sc_deflate_step_4(data, length, final_stream, write_cursor);
+	printf(" Step 4: -> %d (%.1f%%)\n", write_cursor, (float)write_cursor/length*100.0f);
 
-	//printf("%d %d "BYTE_TO_BINARY_PATTERN"\n", count, cmp, BYTE_TO_BINARY(count));
-	//if (write_cursor > length) {
-	//	memcpy(final_stream+1, data, length);
-	//	write_cursor = length;
-	//	final_stream[0] = ANR_SC_RAW;
-	//
-	//}
+	anr_sc_print(final_stream, write_cursor);
 
 	*out_length = write_cursor;
 

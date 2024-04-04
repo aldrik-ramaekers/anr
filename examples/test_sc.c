@@ -32,6 +32,7 @@ void test_file(char* str)
 	fread(iso_buffer, 1, iso_size, file);
 	fclose(file);
 
+	printf("%s:", str);
 	uint32_t out;
 	anr_sc_deflate(iso_buffer, iso_size, &out);
 	free(iso_buffer);
@@ -39,9 +40,10 @@ void test_file(char* str)
 
 int main(int argc, char** argv)
 { 
-	// test_file("res/CorePlus-current.iso");
-	// test_file("res/bible.txt");
-	test_file("res/cid2code.txt");
+	//test_file("res/bible.txt");
+	//test_file("res/cid2code.txt");
+	test_file("res/small.txt");
+	//test_file("res/cid2codesmall.txt");
 
 	#if 0
 	uint32_t out;
