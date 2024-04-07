@@ -1,0 +1,7 @@
+# cid2code.txt (Version 10/24/2017)
+#
+# The data in this table contains nineteen tab-delimited columns of
+# information. The contents of this file supplement "The Adobe-CNS1-7
+# Character Collection" (formerly Adobe Tech Note #5080):
+#
+#

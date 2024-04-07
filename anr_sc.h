@@ -31,420 +31,214 @@ before you include this file in *one* C file to create the implementation.
 #define ANRSC_ASSERT(x) assert(x)
 #endif
 
-typedef enum
-{
-	ANR_SC_FLAG_SIMPLE,
-	ANR_SC_FLAG_RAW,
-} anr_sc_flag;
-
-typedef enum
-{
-	ANR_SC_BLOCK_RAW = 0,
-	ANR_SC_BLOCK_COMPRESSED = 1,
-	ANR_SC_BLOCK_PATTERN = 2,
-	ANR_SC_BLOCK_REFERENCE = 3,
-} anr_sc_block_type;
-
-/*
-
-file flag:
-byte 0: 0 = compressed, 1 = raw
-
-file blocks:
-raw block: 2 - 63 bytes.
-compressed block: 2 bytes.
-2 pair pattern block: 5 bytes.
-reference block: 2 - n bytes.
-
-after byte 1:
-bit 0-1 = 0 = raw, 1 = compressed 2 = pattern, 3 = reference
-bit 1-7 = count (max 63)
-
-if raw: copy count number of bytes.
-if compressed: repeat second byte count number of times.
-if patterned: byte 1,3 = pattern count, byte 2,4 = pattern data, count = how many times to repeat cycle.
-
-DEFLATE STEP 1: compress all bytes.
-DEFLATE STEP 2: find pattern blocks.
-DEFLATE STEP 3: make raw blocks.
-DEFLATE STEP 4: find references.
-*/
-
-ANRSCDEF void* anr_sc_deflate(void* data, uint32_t length, uint32_t* out_length);
+ANRSCDEF uint8_t* anr_sc_deflate(uint8_t* data, uint32_t length, uint32_t* out_length);
+ANRSCDEF uint8_t* anr_sc_inflate(uint8_t* data, uint32_t length, uint32_t* out_length);
 
 #endif // INCLUDE_ANR_SC_H
 
 #ifdef ANR_SC_IMPLEMENTATION
 
-
-static uint32_t anr_sc_remove_0(uint8_t* buffer, uint32_t cursor, uint8_t **buf)
+typedef struct
 {
-	#define COPY_N_BYTES(_num) for (int t = 0; t < _num; t++) write_buffer[write_cursor++] = buffer[i+t];
+	uint8_t val;
+	uint32_t count;
+} anr_sc_val;
 
-	uint8_t* write_buffer = malloc(cursor);
-	uint32_t write_cursor = 1;
-	for (uint32_t i = 1; i < cursor;i+=0)
+#define MAX_ENCODED_CHARS 16
+#define TABLE_SIZE MAX_ENCODED_CHARS
+
+int cmpfunc (const void * a, const void * b) {
+   return ( (*(anr_sc_val*)a).count - (*(anr_sc_val*)b).count );
+}
+
+uint8_t* anr_sc_inflate(uint8_t* data, uint32_t length, uint32_t* out_length)
+{
+	anr_sc_val table[TABLE_SIZE];
+	for (int i = 0; i < TABLE_SIZE; i++)
 	{
-		uint8_t count = buffer[i];
-		uint8_t val = buffer[i+1];
-		uint8_t type = count>>6;
-		
-		if (type == ANR_SC_BLOCK_PATTERN) {
-			COPY_N_BYTES(5);
-			i += 5;
-		}
-		else if (type == ANR_SC_BLOCK_RAW) {
-			if (count == 0) { // Empty block.
+		table[i].val = data[i];
+	}
+
+	uint8_t* inflated = malloc(length*8); // ballpark
+	uint32_t inflated_cursor = 0;
+
+	uint8_t current_block_table = 0;
+	uint8_t block_table_index = 8;
+	uint32_t read_cursor_offset = 0;
+	for (int i = TABLE_SIZE; i < length;)
+	{
+		if (block_table_index == 8) {
+			if (read_cursor_offset == 4) {
+				read_cursor_offset = 0;
 				i++;
-				continue;
 			}
-			count &= 0x3f;
-			COPY_N_BYTES(count+1);
-			i += count+1;
-		}
-		else if (type == ANR_SC_BLOCK_REFERENCE) {
-			count &= 0x3f;
-			COPY_N_BYTES(count+1);
-			i += count+1;
-		}
-		else if (type == ANR_SC_BLOCK_COMPRESSED) {
-			COPY_N_BYTES(2);
-			i += 2;
-		}
-	}
 
-	*buf = write_buffer;
-
-	return write_cursor;
-}
-
-static uint32_t anr_sc_deflate_step_1(void* data, uint32_t length, uint8_t* buffer, uint32_t cursor)
-{	
-	uint8_t* src = (uint8_t*)data;
-	uint8_t cmp = 0;
-	uint8_t count = 0;
-
-	for (int i = 0; i < length; i++)
-	{
-		uint8_t val = src[i];
-		if (val == cmp) {
-			count++;
-
-			if (count <= 63) // max number per block.
-				continue;
+			current_block_table = data[i++];
+			block_table_index = 0;
+			continue;
 		}
 
-		if (count > 0) {
-			if (count > 63) count = 63;
-			count |= (ANR_SC_BLOCK_COMPRESSED<<6);
-			buffer[cursor++] = count;
-			buffer[cursor++] = cmp;
-		}
-		cmp = val;
-		count = 1;
-	}
-	// Finalize last block.
-	count |= (ANR_SC_BLOCK_COMPRESSED<<6);
-	buffer[cursor++] = count;
-	buffer[cursor++] = cmp;
-
-	return cursor;
-}
-
-static uint32_t anr_sc_deflate_step_2(void* data, uint32_t length, uint8_t* buffer, uint32_t cursor)
-{
-	ANRSC_ASSERT(cursor % 2 == 1);
-
-	for (uint32_t i = 1; i < cursor; i+=2)
-	{
-		uint8_t count = buffer[i];
-		//uint8_t val = buffer[i+1];
-		uint8_t type = count>>6;
-		//printf("\n%d %d", count&0x3F, val);
-		ANRSC_ASSERT(type == ANR_SC_BLOCK_COMPRESSED);
-		count &= 0x3F;
-
-		uint8_t pair1_count = 0;
-		uint8_t pair1_val = 0;
-		uint8_t pair2_count = 0;
-		uint8_t pair2_val = 0;
-		uint8_t pair_count = 0; // need atleast 3 pairs for this to pay off.
-		uint8_t finding_pairs = 1;
-		for (int x = i; x < cursor; x+=4)
+		uint8_t is_halve = (current_block_table >> block_table_index) & 0x1;
+		if (read_cursor_offset == 0)
 		{
-			uint8_t p1_count = buffer[x]&0x3F;
-			uint8_t p1_val = buffer[x+1];
-			uint8_t p2_count = buffer[x+2]&0x3F;
-			uint8_t p2_val = buffer[x+3];
-			if (finding_pairs)
+			if (is_halve)
 			{
-				pair1_count = p1_count;
-				pair1_val = p1_val;
-				pair2_count = p2_count;
-				pair2_val = p2_val;
-				finding_pairs = 0;
-				pair_count = 1;
-				continue;
-			}
-
-			if (p1_count == pair1_count && p2_count == pair2_count && p1_val == pair1_val && p2_val == pair2_val && pair_count)
-			{
-				pair_count++;
-
-				if (pair_count < 63) // max number per block.
-				{
-					if (x+4 < cursor)
-						continue;
-				}
-			}
-
-			if (pair_count >= 3) { // Less than 3 pairs is better off raw.
-				// Insert pair into current block.
-				uint32_t saved_space = pair_count*4;
-				buffer[i] = pair_count;
-				buffer[i] |= (ANR_SC_BLOCK_PATTERN<<6);
-				buffer[i+1] = pair1_count;
-				buffer[i+2] = pair1_val;
-				buffer[i+3] = pair2_count;
-				buffer[i+4] = pair2_val;
-
-				uint8_t* write_start = buffer+i+5;
-				uint32_t read_offset = i+saved_space;
-				memmove(write_start, buffer + read_offset, cursor - read_offset); // TODO dont do this..
-
-				cursor -= saved_space;
-				cursor += 5;
-
-				//printf("\nFound pair! count: %d, saved: %d [%d %d %d %d]\n", pair_count, saved_space, pair1_count, pair1_val, pair2_count, pair2_val);
-
-				i += 3;
-			}
-			break;
-		}
-	}
-
-	return cursor;
-}
-
-static uint32_t anr_sc_deflate_step_3(uint8_t* buffer, uint32_t cursor, uint8_t** result_buffer)
-{
-	int singles_count = 0;
-	uint32_t index_start = 0;
-	for (uint32_t i = 1; i < cursor; i+=2)
-	{
-		uint8_t count = buffer[i];
-		uint8_t type = count>>6;
-		
-		if (type == ANR_SC_BLOCK_PATTERN) {
-			i += 3;
-			goto append_raw;
-		}
-
-		ANRSC_ASSERT(type == ANR_SC_BLOCK_COMPRESSED);
-		count &= 0x3F;
-
-
-		if (count == 1) 
-		{
-			if (singles_count == 0) index_start = i;
-			singles_count++;
-
-			if (singles_count < 63 && i+2 < cursor) // max number per block.
-				continue;
-		}
-
-append_raw:
-		if (singles_count >= 2) // Need atleast 2 blocks for this to pay off.
-		{
-			for (int x = 0; x < singles_count; x++) {
-				buffer[index_start+x+1] = buffer[index_start+(x*2+1)];
-			}
-
-			buffer[index_start] = singles_count;
-			buffer[index_start] |= (ANR_SC_BLOCK_RAW<<6);
-
-			uint32_t space_written = (singles_count+1);
-			uint32_t space_saved = (singles_count*2)-space_written;
-			uint32_t copy_from = index_start+space_written+space_saved;
-			
-			memset(buffer+index_start+space_written, 0, space_saved);
-			i = copy_from-2;
-
-			singles_count = 0;
-
-		}
-
-		singles_count = 0;
-	}
-
-	cursor = anr_sc_remove_0(buffer, cursor, result_buffer);
-	free(buffer);
-	return cursor;
-}
-
-static int32_t anr_sc_find_raw_match(uint8_t* buffer, uint32_t cursor, uint32_t cmp_index, uint32_t cmp_length, uint32_t upto)
-{
-	for (uint32_t i = 1; i < upto;i+=0)
-	{
-		uint8_t count = buffer[i];
-		uint8_t type = count>>6;
-		
-		if (type == ANR_SC_BLOCK_PATTERN) {
-			i += 5;
-		}
-		else if (type == ANR_SC_BLOCK_RAW) {
-			count &= 0x3f;
-
-			if (count > 3 && count == cmp_length && memcmp(buffer+i, buffer+cmp_index, count+1) == 0) {
-				return i;
-			}
-
-			i += count+1;
-		}
-		else if (type == ANR_SC_BLOCK_COMPRESSED) {
-			i += 2;
-		}
-		else if (type == ANR_SC_BLOCK_REFERENCE) {
-			count &= 0x3f;
-			i += count+1;
-		}
-	}
-
-	return -1;
-}
-
-int is_big_endian(void)
-{
-    union {
-        uint32_t i;
-        char c[4];
-    } e = { 0x01000000 };
-
-    return e.c[0];
-}
-
-static uint32_t anr_sc_deflate_step_4(uint8_t* buffer, uint32_t cursor, uint8_t** result_buffer)
-{
-	for (uint32_t i = 1; i < cursor;i+=0)
-	{
-		uint8_t count = buffer[i];
-		uint8_t val = buffer[i+1];
-		uint8_t type = count>>6;
-		
-		if (type == ANR_SC_BLOCK_PATTERN) {
-			i += 5;
-		}
-		else if (type == ANR_SC_BLOCK_RAW) {
-			count &= 0x3f;
-
-			uint32_t old_count = count + 1; // Length if this block.
-
-			int32_t match = anr_sc_find_raw_match(buffer, cursor, i, count, i-1);
-			uint8_t length_of_match = 0;
-			if (match > 0)
-			{
-				if (val < 0x10000) {
-					if (val < 0x100) length_of_match = 1;
-					else length_of_match = 2;
-				} else {
-					if (val < 0x100000000L) length_of_match = 3;
-					else length_of_match = 4;
-				}
-
-				uint32_t new_count = length_of_match+1;
-
-				// Turn raw block into reference to matching block.
-				buffer[i] = length_of_match;
-				buffer[i] |= (ANR_SC_BLOCK_REFERENCE<<6);
-
-				//printf ("big endian: %d", is_big_endian());
-				memcpy(buffer+i+1, &match, length_of_match);
-				memset(buffer+i+new_count, 0, old_count-new_count);
-				i += old_count;
+				uint8_t table_index = (data[i] >> 4);
+				inflated[inflated_cursor++] = table[table_index].val;
+				read_cursor_offset = 4;
 			}
 			else
 			{
-				i += count+1;
+				inflated[inflated_cursor++] = data[i];
+				read_cursor_offset = 0;
+				i++;
 			}
 		}
-		else if (type == ANR_SC_BLOCK_COMPRESSED) {
-			i += 2;
-		}
-		else
+		else if (read_cursor_offset == 4)
 		{
-			ANRSC_ASSERT(0);
+			if (is_halve)
+			{
+				uint8_t table_index = (data[i] & 0xF);
+				inflated[inflated_cursor++] = table[table_index].val;
+
+				read_cursor_offset = 0;
+				i++;
+			}
+			else
+			{
+				uint8_t top = data[i] & 0xF;
+				uint8_t bottom = data[i+1] & 0xF0;
+				uint8_t val = (top << 4) | (bottom >> 4);
+				inflated[inflated_cursor++] = val;
+
+				read_cursor_offset = 4;
+				i++;
+			}
 		}
+
+
+		block_table_index++;
 	}
 
-	cursor = anr_sc_remove_0(buffer, cursor, result_buffer);
-	free(buffer);
-	return cursor;
+	*out_length = inflated_cursor;
+	return inflated;
 }
 
-static void anr_sc_print(uint8_t* buffer, uint32_t cursor)
+uint8_t* anr_sc_deflate(uint8_t* data, uint32_t length, uint32_t* out_length)
 {
-	for (uint32_t i = 1; i < cursor;i+=0)
+	anr_sc_val values[256];
+	for (uint32_t i = 0; i < 256; i++)
 	{
-		uint8_t count = buffer[i];
-		uint8_t val = buffer[i+1];
-		uint8_t type = count>>6;
-		
-		if (type == ANR_SC_BLOCK_PATTERN) {
-			printf("\npattern %d x [%d %d %d %d]", count&0x3f, buffer[i+1], buffer[i+2] - '0', buffer[i+3], buffer[i+4] - '0');
-			i += 5;
-		}
-		else if (type == ANR_SC_BLOCK_RAW) {
-			count &= 0x3f;
-			printf("\nraw: %d > ", count);
-			for (int x = 1; x <= count; x++) printf("%d", buffer[i+x] - '0');
-			i += count+1;
-		}
-		else if (type == ANR_SC_BLOCK_REFERENCE) {
-			count &= 0x3f;
+		values[i].val = i;
+		values[i].count = 0;
+	}
 
-			uint32_t value;
-			memcpy(&value, buffer+i+1, count);
+	for (uint32_t i = 0; i < length; i++)
+	{
+		values[data[i]].count++;
+	}
+	qsort(values, 256, sizeof(anr_sc_val), cmpfunc);
 
-			printf("\nreference: length > %d, index > %d > ", count, value);
-
-			uint8_t raw_count = buffer[value];
-			for (int x = 1; x <= raw_count; x++) printf("%d", buffer[value+x] - '0');
-			i += count+1;
-		}
-		else if (type == ANR_SC_BLOCK_COMPRESSED) {
-			printf("\ncompressed: %d %d", count&0x3f, val - '0');
-			i += 2;
+	anr_sc_val table[TABLE_SIZE];
+	for (int i = 0; i < 256; i++)
+	{
+		if (values[i].count == 0) continue;
+		if (i < 256-MAX_ENCODED_CHARS) continue;
+		table[256-i-1] = values[i];
+	}
+	
+	// Find index of last indexable byte.
+	uint32_t index_of_last_byte = 0;
+	for (uint32_t i = 0; i < length; i++)
+	{
+		for (uint8_t x = 0; x < MAX_ENCODED_CHARS; x++) {
+			if (data[i] == table[x].val) {
+				index_of_last_byte = i;
+			}
 		}
 	}
-}
+	
+	// Write encoding table.
+	uint32_t max_size = length + MAX_ENCODED_CHARS + (length/8);
+	uint8_t* deflated = malloc(max_size);
+	memset(deflated, 0, max_size);
+	uint32_t deflated_cursor = 0;
+	uint32_t deflate_cursor_offset = 0;
+	for (int i = 0; i < MAX_ENCODED_CHARS; i++)
+	{
+		deflated[deflated_cursor++] = table[i].val;
+	}
 
-void* anr_sc_deflate(void* data, uint32_t length, uint32_t* out_length)
-{
-	uint32_t max_size = length*3 + 1;
-	uint8_t* final_stream = malloc(max_size);
-	uint32_t write_cursor = 0;
+	uint8_t current_block_table = 0;
+	uint32_t bits_in_block = 8;
+	uint32_t current_block_index = 0;
+	for (int i = 0; i < length; i++)
+	{
+		if (bits_in_block == 8) {
+			bits_in_block = 0;
+			current_block_table = 0;
+			current_block_index = deflated_cursor;
+			deflated_cursor++; // Reserved for block table.
+		}
 
-	final_stream[0] = ANR_SC_FLAG_SIMPLE;
-	write_cursor++;
+		uint8_t is_halve = 0;
+		if (i == index_of_last_byte) {
+			if (deflate_cursor_offset == 0) {
+				goto skip_last_halfbyte;
+			}
+		}
+			
+		for (uint8_t x = 0; x < MAX_ENCODED_CHARS; x++) {
+			if (data[i] == table[x].val) {
+				is_halve = 1;
 
-	write_cursor = anr_sc_deflate_step_1(data, length, final_stream, write_cursor);
-	printf(" Step 1: %d -> (%.1f%%)", length, (float)write_cursor/length*100.0f);
-	write_cursor = anr_sc_deflate_step_2(data, length, final_stream, write_cursor);
-	printf(" Step 2: -> (%.1f%%)", (float)write_cursor/length*100.0f);
-	write_cursor = anr_sc_deflate_step_3(final_stream, write_cursor, &final_stream);
-	printf(" Step 3: -> (%.1f%%)", (float)write_cursor/length*100.0f);
-	write_cursor = anr_sc_deflate_step_4(final_stream, write_cursor, &final_stream);
-	printf(" Step 4: -> %d (%.1f%%)\n", write_cursor, (float)write_cursor/length*100.0f);
+				if (deflate_cursor_offset == 0)
+				{
+					deflated[deflated_cursor] = x << 4;
+					deflate_cursor_offset = 4;
+				}
+				else if (deflate_cursor_offset == 4)
+				{
+					deflated[deflated_cursor++] |= x;
+					deflate_cursor_offset = 0;
+				}
+				break;
+			}
+		}
 
-	//anr_sc_print(final_stream, write_cursor);
+		
+		skip_last_halfbyte:
+		if (!is_halve)
+		{
+			if (deflate_cursor_offset == 0)
+			{
+				deflated[deflated_cursor++] = data[i];
+			}
+			else if (deflate_cursor_offset == 4)
+			{
+				uint8_t top = data[i] >> 4;
+				uint8_t bottom = data[i] << 4;
+				deflated[deflated_cursor++] |= top;
+				deflated[deflated_cursor] |= bottom;
+			}
+		}
 
-	*out_length = write_cursor;
+		current_block_table |= (is_halve << bits_in_block);
+		bits_in_block++;
+		if (bits_in_block == 8 || i+1>= length) {
+			deflated[current_block_index] = current_block_table;
 
-	#ifdef ANR_SC_DEBUG
+			if (deflate_cursor_offset == 4) {
+				deflate_cursor_offset = 0;
+				deflated_cursor++;
+			}
+		}
+	}
 
-	#endif
+	printf(" Deflated (%.1f%%)\n", (float)deflated_cursor/length*100.0f);
 
-	return final_stream;
+	*out_length = deflated_cursor;
+	return deflated;
 }
 
 
