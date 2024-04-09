@@ -56,11 +56,7 @@ LICENSE
 #include <stddef.h>
 
 #ifndef ANRDATADEF
-#ifdef ANR_DATA_STATIC
-#define ANRDATADEF static
-#else
 #define ANRDATADEF extern
-#endif
 #endif
 
 #include <inttypes.h>

@@ -11,11 +11,7 @@ before you include this file in *one* C file to create the implementation.
 #define INCLUDE_ANR_SC_H
 
 #ifndef ANRSCDEF
-#ifdef ANR_SC_STATIC
-#define ANRSCDEF static
-#else
 #define ANRSCDEF extern
-#endif
 #endif
 
 #ifdef ANR_SC_DEBUG
@@ -140,6 +136,7 @@ uint8_t* anr_sc_deflate(uint8_t* data, uint32_t length, uint32_t* out_length)
 	qsort(values, 256, sizeof(anr_sc_val), cmpfunc);
 
 	anr_sc_val table[TABLE_SIZE];
+	memset(table, 0, sizeof(table));
 	for (int i = 0; i < 256; i++)
 	{
 		if (values[i].count == 0) continue;
@@ -152,6 +149,7 @@ uint8_t* anr_sc_deflate(uint8_t* data, uint32_t length, uint32_t* out_length)
 	for (uint32_t i = 0; i < length; i++)
 	{
 		for (uint8_t x = 0; x < MAX_ENCODED_CHARS; x++) {
+			if (table[x].count == 0) continue;
 			if (data[i] == table[x].val) {
 				index_of_last_byte = i;
 			}
@@ -235,7 +233,9 @@ uint8_t* anr_sc_deflate(uint8_t* data, uint32_t length, uint32_t* out_length)
 		}
 	}
 
+	#ifdef ANR_SC_DEBUG
 	printf(" Deflated (%.1f%%)\n", (float)deflated_cursor/length*100.0f);
+	#endif
 
 	*out_length = deflated_cursor;
 	return deflated;

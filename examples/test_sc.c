@@ -1,7 +1,8 @@
-#define ANR_SC_DEBUG
+//#define ANR_SC_DEBUG
 #define ANR_SC_IMPLEMENTATION
 #include "../anr_sc.h"
 
+#include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
 
@@ -68,6 +69,8 @@ void test_file(char* str)
 	assert(out == iso_size);
 	assert(memcmp(iso_buffer, decompressed_data, out) == 0);
 	
+	free(compressed_data);
+	free(decompressed_data);
 	free(iso_buffer);
 }
 
